@@ -17,6 +17,7 @@
   */
 package fr.geocites.lucie
 
+import scala.annotation.tailrec
 import scala.util.Random
 
 object Model extends App {
@@ -25,9 +26,8 @@ object Model extends App {
     val max = (citySide * math.sqrt(2)) / 2
     val relativeX = x - centerX
     val relativeY = y - centerY
-
     val distance = math.sqrt(relativeX * relativeX + relativeY * relativeY)
-    Urban(max - distance, List.empty)
+    Urban((max - distance) / max, List.empty)
   }
 
   def activities(random: Random) =
@@ -47,7 +47,75 @@ object Model extends App {
   val side = 11
   val grid = Grid.generate(side, stage1(side))
 
+  val finalGrid = Dynamic.simulate(grid, Vector(Dynamic.randomMove(_, Industry)), 10)
+
   println(Grid.toCSV(grid))
+
+  println("-- Final --")
+
+  println(Grid.toCSV(finalGrid))
+
+}
+
+
+
+
+
+
+object Dynamic {
+
+  def multinomial[T](values: List[(T, Double)])(implicit random: Random): T = {
+    @tailrec def multinomial0[T](values: List[(T, Double)])(draw: Double): T = {
+      values match {
+        case Nil ⇒ throw new RuntimeException("List should never be empty.")
+        case (bs, _) :: Nil ⇒ bs
+        case (bs, weight) :: tail ⇒
+          if (draw <= weight) bs
+          else multinomial0(tail)(draw - weight)
+      }
+    }
+
+    multinomial0(values)(random.nextDouble() * values.map(_._2).sum)
+  }
+
+  def randomMove(grid: Grid, activity: Activity)(implicit random: Random): Grid = {
+    val origins =
+      grid.coordinates.flatMap { case c@(i, j) =>
+        grid(i, j) match {
+          case cell@Urban(_, activities) =>
+            if(activities.contains(activity)) Some((c, cell)) else None
+          case _ => None
+        }
+      }
+
+    val ((ox, oy), origin) = origins(random.nextInt(origins.size))
+
+    val destinations: List[(((Int, Int), Urban), Double)] =
+      grid.coordinates.flatMap { case c@(i, j) =>
+        grid(i, j) match {
+          case cell@Urban(centrality, _) => Some(((c, cell), 1 - centrality))
+          case _ => None
+        }
+      }.toList
+
+
+    val ((dx, dy), destination) = multinomial(destinations.toList)(random)
+
+    val updatedOrigin = grid.update(ox, oy)(Urban.removeActivity(origin, activity))
+    updatedOrigin.update(dx, dy)(Urban.addActivity(destination, activity))
+  }
+
+
+  def simulate(grid: Grid, rules: Vector[Grid => Grid], steps: Int)(implicit random: Random) = {
+    def simulate0(currentStep: Int, grid: Grid): Grid =
+      if(currentStep >= steps) grid
+      else {
+        val appliedRule = rules(random.nextInt(rules.size))
+        val newGrid = appliedRule(grid)
+        simulate0(currentStep +1, newGrid)
+      }
+    simulate0(0, grid)
+  }
 
 }
 
@@ -65,6 +133,23 @@ case object Water extends Cell {
   def centrality = 0
 }
 
+
+object Urban {
+
+  def removeActivity(urban: Urban, activity: Activity): Urban = {
+    urban.activities.indexOf(activity) match {
+      case -1 => urban
+      case i =>
+        val newActivities = urban.activities patch (from = i, patch = Nil, replaced = 1)
+        urban.copy(activities = newActivities)
+    }
+  }
+
+  def addActivity(urban: Urban, activity: Activity) =
+    urban.copy(activities = urban.activities ++ Seq(activity))
+
+}
+
 case class Urban(centrality: Double, activities: List[Activity]) extends Cell
 
 sealed trait Activity
@@ -75,6 +160,12 @@ case object NotUrban extends Cell {
 }
 
 case class Grid(cells: Vector[Vector[Cell]], edges: Vector[Edge], side: Int) {
+
+  def coordinates =
+    for {
+      i <- 0 until side
+      j <- 0 until side
+    } yield (i, j)
 
   def update(x: Int, y: Int)(c: Cell) = {
     val line = cells(x)
@@ -101,7 +192,7 @@ object Cell {
 
   def toActivityCSV(cell: Cell) =
     cell match {
-      case Urban(_, activities) => s"Activities(${activities.mkString(",")})"
+      case Urban(_, activities) => s"Activities(${activities.mkString(" & ")})"
       case _ => ""
     }
 }
