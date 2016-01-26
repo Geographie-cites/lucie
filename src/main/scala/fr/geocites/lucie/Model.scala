@@ -22,22 +22,24 @@ import scala.util.Random
 
 object Model extends App {
 
-  def concentricCentrality(citySide: Int, centerX: Int, centerY: Int)(x: Int, y: Int) = {
+  def concentricCentrality(citySide: Int, centerX: Int, centerY: Int)(x: Int, y: Int): Double = {
     val max = (citySide * math.sqrt(2)) / 2
     val relativeX = x - centerX
     val relativeY = y - centerY
     val distance = math.sqrt(relativeX * relativeX + relativeY * relativeY)
-    Urban((max - distance) / max, List.empty)
+    (max - distance) / max
   }
 
+  def centrality = concentricCentrality(citySide = 3, centerX = 4, centerY = 8)(_, _)
+
   def activities(random: Random) =
-    if(random.nextDouble() < 0.5) List(Industry) else List.empty
+    if(random.nextDouble() < 0.5) Vector(Industry) else Vector()
 
   def stage1(side: Int)(x: Int, y: Int)(implicit random: Random) =
     if(x == 0) Water
     else {
       if(x >= 3 && x <= 5 && y >= 7 && y <= 9) {
-        val emptyCell = concentricCentrality(citySide = 3, centerX = 4, centerY = 8)(x, y)
+        val emptyCell = Urban(centrality = centrality(x, y), activities = Vector())
         emptyCell.copy(activities = activities(random))
       } else NotUrban
     }
@@ -47,7 +49,10 @@ object Model extends App {
   val side = 11
   val grid = Grid.generate(side, stage1(side))
 
-  val finalGrid = Dynamic.simulate(grid, Vector(Dynamic.randomMove(_, Industry)), 10)
+  val intraIndustry = RuleBase(Dynamic.UrbanToUrbanRandomMove(Industry), 1.0)
+  val extraIndustry = RuleBase(Dynamic.UrbanToNotUrbanRandomMove(Industry, centrality), 0.1)
+
+  val finalGrid = Dynamic.simulate(grid, Vector(intraIndustry, extraIndustry), 100)
 
   println(Grid.toCSV(grid))
 
@@ -57,9 +62,8 @@ object Model extends App {
 
 }
 
-
-
-
+case class RuleBase(rule: Rule, weight: Double)
+trait Rule extends ((Grid, Random) => Grid)
 
 
 object Dynamic {
@@ -78,40 +82,74 @@ object Dynamic {
     multinomial0(values)(random.nextDouble() * values.map(_._2).sum)
   }
 
-  def randomMove(grid: Grid, activity: Activity)(implicit random: Random): Grid = {
-    val origins =
-      grid.coordinates.flatMap { case c@(i, j) =>
-        grid(i, j) match {
-          case cell@Urban(_, activities) =>
-            if(activities.contains(activity)) Some((c, cell)) else None
-          case _ => None
+  object RandomMove {
+    def selectOrigin(grid: Grid, activity: Activity, random: Random) = {
+      val origins =
+        grid.coordinates.flatMap { case c@(i, j) =>
+          grid(i, j) match {
+            case cell@Urban(_, activities) =>
+              if(activities.contains(activity)) Some((c, cell)) else None
+            case _ => None
+          }
+        }
+
+      origins(random.nextInt(origins.size))
+    }
+  }
+
+  case class UrbanToUrbanRandomMove(activity: Activity) extends Rule {
+    def apply(grid: Grid, random: Random): Grid = {
+      val ((ox, oy), origin) = RandomMove.selectOrigin(grid, activity, random)
+
+      val destinations: List[(((Int, Int), Urban), Double)] =
+        grid.coordinates.filter(_ != (ox, oy)).flatMap { case c@(i, j) =>
+          grid(i, j) match {
+            case cell@Urban(centrality, _) => Some(((c, cell), 1 - centrality))
+            case _ => None
+          }
+        }.toList
+
+
+      val ((dx, dy), destination) = multinomial(destinations.toList)(random)
+
+      val updatedOrigin = grid.update(ox, oy)(Urban.removeActivity(origin, activity))
+      val updatedGrid = updatedOrigin.update(dx, dy)(Urban.addActivity(destination, activity))
+
+      updatedGrid
+    }
+  }
+
+  case class UrbanToNotUrbanRandomMove(activity: Activity, centrality: (Int, Int) => Double) extends Rule {
+    def apply(grid: Grid, random: Random): Grid = {
+      val ((ox, oy), origin) = RandomMove.selectOrigin(grid, activity, random)
+
+      val peripheral = grid.coordinates.filter { case(i, j) =>
+        grid.neighbours(i, j).exists { case(i, j) =>
+          grid(i, j) match {
+            case _: Urban => true
+            case _ => false
+          }
         }
       }
 
-    val ((ox, oy), origin) = origins(random.nextInt(origins.size))
 
-    val destinations: List[(((Int, Int), Urban), Double)] =
-      grid.coordinates.flatMap { case c@(i, j) =>
-        grid(i, j) match {
-          case cell@Urban(centrality, _) => Some(((c, cell), 1 - centrality))
-          case _ => None
-        }
-      }.toList
+      val (dx, dy) = peripheral(random.nextInt(peripheral.size))
 
+      val updatedOrigin = grid.update(ox, oy)(Urban.removeActivity(origin, activity))
+      val updatedGrid = updatedOrigin.update(dx, dy)(Urban(centrality = centrality(dx, dy), activities = Vector(activity)))
 
-    val ((dx, dy), destination) = multinomial(destinations.toList)(random)
-
-    val updatedOrigin = grid.update(ox, oy)(Urban.removeActivity(origin, activity))
-    updatedOrigin.update(dx, dy)(Urban.addActivity(destination, activity))
+      updatedGrid
+    }
   }
 
+  def simulate(grid: Grid, rules: Vector[RuleBase], steps: Int)(implicit random: Random) = {
+    def selectRule = multinomial(rules.map{ case RuleBase(r, w) => (r, w)}.toList)
 
-  def simulate(grid: Grid, rules: Vector[Grid => Grid], steps: Int)(implicit random: Random) = {
     def simulate0(currentStep: Int, grid: Grid): Grid =
       if(currentStep >= steps) grid
       else {
-        val appliedRule = rules(random.nextInt(rules.size))
-        val newGrid = appliedRule(grid)
+        val appliedRule = selectRule
+        val newGrid = appliedRule(grid, random)
         simulate0(currentStep +1, newGrid)
       }
     simulate0(0, grid)
@@ -150,7 +188,7 @@ object Urban {
 
 }
 
-case class Urban(centrality: Double, activities: List[Activity]) extends Cell
+case class Urban(centrality: Double, activities: Vector[Activity]) extends Cell
 
 sealed trait Activity
 case object Industry extends Activity
@@ -160,6 +198,21 @@ case object NotUrban extends Cell {
 }
 
 case class Grid(cells: Vector[Vector[Cell]], edges: Vector[Edge], side: Int) {
+
+  def neighboursCells(i: Int, j: Int) =
+    for {
+      (ni, nj) <- neighbours(i, j)
+    } yield apply(ni, nj)
+
+  def neighbours(i: Int, j: Int) =
+    for {
+      di <- (-1 to 1)
+      dj <- (-1 to 1)
+      if(di != 0 && dj != 0)
+      ni = i + di
+      nj = j + dj
+      if(ni >= 0 && nj >= 0 && ni < side && nj < side)
+    } yield (i + di, j + dj)
 
   def coordinates =
     for {
