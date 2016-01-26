@@ -17,24 +17,32 @@
   */
 package fr.geocites.lucie
 
+import scala.util.Random
+
 object Model extends App {
 
-  def concentricDensity(citySide: Int, centerX: Int, centerY: Int)(x: Int, y: Int) = {
+  def concentricCentrality(citySide: Int, centerX: Int, centerY: Int)(x: Int, y: Int) = {
     val max = (citySide * math.sqrt(2)) / 2
     val relativeX = x - centerX
     val relativeY = y - centerY
 
     val distance = math.sqrt(relativeX * relativeX + relativeY * relativeY)
-    Urban(max - distance, List(Industry))
+    Urban(max - distance, List.empty)
   }
 
-  def stage1(side: Int)(x: Int, y: Int) =
+  def activities(random: Random) =
+    if(random.nextDouble() < 0.5) List(Industry) else List.empty
+
+  def stage1(side: Int)(x: Int, y: Int)(implicit random: Random) =
     if(x == 0) Water
     else {
-      if(x >= 3 && x <= 5 && y >= 7 && y <= 9)
-        concentricDensity(citySide = 3, centerX = 4, centerY = 8)(x, y)
-      else NotUrban
+      if(x >= 3 && x <= 5 && y >= 7 && y <= 9) {
+        val emptyCell = concentricCentrality(citySide = 3, centerX = 4, centerY = 8)(x, y)
+        emptyCell.copy(activities = activities(random))
+      } else NotUrban
     }
+
+  implicit val rng = new Random(42)
 
   val side = 11
   val grid = Grid.generate(side, stage1(side))
@@ -49,25 +57,21 @@ case object Vertical extends Orientation
 
 case class Edge(orientation: Orientation, coordinate: Int)
 
-
-
 sealed trait Cell {
-  def density: Double
+  def centrality: Double
 }
 
 case object Water extends Cell {
-  def density = 0
+  def centrality = 0
 }
 
-case class Urban(density: Double, activities: List[Activity]) extends Cell
+case class Urban(centrality: Double, activities: List[Activity]) extends Cell
 
 sealed trait Activity
 case object Industry extends Activity
 
-
-
 case object NotUrban extends Cell {
-  def density = 0
+  def centrality = 0
 }
 
 case class Grid(cells: Vector[Vector[Cell]], edges: Vector[Edge], side: Int) {
@@ -88,10 +92,10 @@ object Edge {
 }
 
 object Cell {
-  def toDensityCSV(cell: Cell) =
+  def toCentralityCSV(cell: Cell) =
     cell match {
       case Water => "Water"
-      case Urban(density, _) => s"Urban($density)"
+      case Urban(centrality, _) => s"Urban($centrality)"
       case NotUrban => "NotUrban"
     }
 
@@ -104,17 +108,17 @@ object Cell {
 
 object Grid {
 
-  def generate(side: Int, density: (Int, Int) => Cell) = {
+  def generate(side: Int, centrality: (Int, Int) => Cell) = {
     val cells =
       Vector.tabulate(side, side) {
-        (i, j) => density(i, j)
+        (i, j) => centrality(i, j)
       }
 
     Grid(cells, Vector.empty, side)
   }
 
   def toCSV(grid: Grid) = {
-    val cellViews = List(Cell.toDensityCSV(_), Cell.toActivityCSV(_))
+    val cellViews = List(Cell.toCentralityCSV(_), Cell.toActivityCSV(_))
     val edges = grid.edges.map(Edge.toCSV).mkString(",")
 
     s"""${cellViews.map{ v => Grid.view(grid, v)}.mkString("\n\n")}
