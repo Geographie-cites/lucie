@@ -18,14 +18,14 @@
 package fr.geocites.lucie
 
 object Model extends App {
-  
+
   def concentricDensity(citySide: Int, centerX: Int, centerY: Int)(x: Int, y: Int) = {
     val max = (citySide * math.sqrt(2)) / 2
     val relativeX = x - centerX
     val relativeY = y - centerY
 
     val distance = math.sqrt(relativeX * relativeX + relativeY * relativeY)
-    Urban(max - distance)
+    Urban(max - distance, List(Industry))
   }
 
   def stage1(side: Int)(x: Int, y: Int) =
@@ -49,6 +49,8 @@ case object Vertical extends Orientation
 
 case class Edge(orientation: Orientation, coordinate: Int)
 
+
+
 sealed trait Cell {
   def density: Double
 }
@@ -57,7 +59,12 @@ case object Water extends Cell {
   def density = 0
 }
 
-case class Urban(density: Double) extends Cell
+case class Urban(density: Double, activities: List[Activity]) extends Cell
+
+sealed trait Activity
+case object Industry extends Activity
+
+
 
 case object NotUrban extends Cell {
   def density = 0
@@ -81,11 +88,17 @@ object Edge {
 }
 
 object Cell {
-  def toCSV(cell: Cell) =
+  def toDensityCSV(cell: Cell) =
     cell match {
       case Water => "Water"
-      case Urban(density) => s"Urban($density)"
+      case Urban(density, _) => s"Urban($density)"
       case NotUrban => "NotUrban"
+    }
+
+  def toActivityCSV(cell: Cell) =
+    cell match {
+      case Urban(_, activities) => s"Activities(${activities.mkString(",")})"
+      case _ => ""
     }
 }
 
@@ -101,12 +114,18 @@ object Grid {
   }
 
   def toCSV(grid: Grid) = {
-    val csvGrid = grid.cells.map(_.map(Cell.toCSV).mkString(",")).mkString("\n")
+    val cellViews = List(Cell.toDensityCSV(_), Cell.toActivityCSV(_))
     val edges = grid.edges.map(Edge.toCSV).mkString(",")
 
-    s"""$csvGrid
-      |$edges
-    """.stripMargin
+    s"""${cellViews.map{ v => Grid.view(grid, v)}.mkString("\n\n")}
+      |
+      |$edges""".stripMargin
+  }
+
+  def view(grid: Grid, view: Cell => String) = {
+    val csvGrid = grid.cells.map(_.map(view).mkString(",")).mkString("\n")
+
+    s"""$csvGrid""".stripMargin
   }
 
 }
