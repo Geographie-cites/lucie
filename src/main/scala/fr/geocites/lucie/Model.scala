@@ -22,7 +22,17 @@ import scala.util.Random
 
 object Model extends App {
 
-  def concentricCentrality(grid: Grid, centerX: Int, centerY: Int): PartialFunction[Cell, Double] = {
+  /**
+    *  Fonction de calcul d'une valeur de centralité :
+    *  distance au centre (centerX,centerY)
+    *  normalisée entre 0 et 1 par rapport à la distance max au centre (citySide>Center)
+    *
+    * @param grid
+    * @param centerX
+    * @param centerY
+    * @return
+    */
+  def concentricCentrality(grid: Grid, centerX: Int, centerY: Int): PartialFunction[Cell.Location, Double] = {
     def value(x: Int, y: Int): Double = {
       val max = (grid.side * math.sqrt(2)) / 2
       val relativeX = x - centerX
@@ -33,46 +43,60 @@ object Model extends App {
 
     val centralities =
       for {
-        (i, j) <- Grid.coordinates(grid.side)
-      } yield {
-        val c =  grid.cells(i)(j)
-        c match {
-          case _: Urban => c -> value(i, j)
-          case _ => c -> 0.0
+        c <- Grid.cells(grid)
+      } yield
+        c.get(grid) match {
+          case u: Urban =>
+            val (x, y) = u.location
+            u.location -> value(x, y)
+          case c => c.location -> 0.0
         }
-      }
 
     centralities.toMap
   }
 
+  /* Fonction définition random d'un vecteur activité de type Industry ou vide */
   def activities(random: Random) =
-    if(random.nextDouble() < 0.5) Vector(Industry) else Vector()
+    if(random.nextDouble() < 1.0) Vector(Industry) else Vector()
 
+  /**
+    * Fonction de génération de la grille de départ
+    *
+    * placement détermine de WATER
+    * placement déterminé de URBAN > attribut activité généré depuis fonction qui génére les activités
+    * cellules non URBAN = NONURBAN
+    *
+    * @param side side of the world
+    * @return the world for stage1
+    */
   def stage1(side: Int)(x: Int, y: Int)(implicit random: Random) =
-    if(x == 0) Water
+    if(x == 0) Water(x -> y)
     else {
-      if(x >= 3 && x <= 5 && y >= 7 && y <= 9) {
-        val emptyCell = Urban(activities = Vector())
+      if (x >= 3 && x <= 5 && y >= 7 && y <= 9) {
+        val emptyCell = Urban(x -> y, activities = Vector())
         emptyCell.copy(activities = activities(random))
-      } else NotUrban
+      } else NotUrban(x -> y)
     }
 
   implicit val rng = new Random(42)
 
+  /* génération d'une grille de 11*11 cells*/
   val side = 11
   val grid = Grid.generate(side, stage1(side))
 
+  /* Fonction de calcul de la valeur de centralité à partir de la fonction ci-dessus et de deux paramètes x,y*/
   def centrality(grid: Grid) = concentricCentrality(grid, centerX = 4, centerY = 8)
 
+  /* Transitions rules */
   val intraIndustry = RuleBase(Dynamic.UrbanToUrbanRandomMove(Industry, centrality(grid)), 1.0)
   val extraIndustry = RuleBase(Dynamic.UrbanToNotUrbanRandomMove(Industry), 0.1)
 
-  val finalGrid = Dynamic.simulate(grid, Vector(intraIndustry, extraIndustry), 100)
-
   println(Grid.toCSV(centrality(grid), grid))
 
-  println("-- Final --")
+  /* Simulate the dynamic */
+  val finalGrid = Dynamic.simulate(grid, Vector(intraIndustry, extraIndustry), 100)
 
+  println("-- Final --")
   println(Grid.toCSV(centrality(finalGrid), finalGrid))
 
 }
@@ -97,49 +121,72 @@ object Dynamic {
     multinomial0(values)(random.nextDouble() * values.map(_._2).sum)
   }
 
-  object RandomMove {
-    def selectOrigin(grid: Grid, activity: Activity, random: Random) = {
-      val origins =
-        Grid.cells(grid).flatMap { cell =>
-          cell.get(grid) match {
-            case urban@Urban(activities) =>
-              if(activities.contains(activity)) Some(cell -> urban)
-              else None
-            case _ => None
-          }
+  /**
+    * Randomly select origin of a move among cells containing a given activity
+    *
+    */
+  def selectOriginWithActivity(grid: Grid, activity: Activity, random: Random) = {
+    val origins =
+      Grid.cells(grid).flatMap { cell =>
+        cell.get(grid) match {
+          case urban: Urban =>
+            if(urban.activities.contains(activity)) Some(cell -> urban)
+            else None
+          case _ => None
         }
+      }
 
-      origins(random.nextInt(origins.size))
-    }
+    origins(random.nextInt(origins.size))
   }
 
-  case class UrbanToUrbanRandomMove(activity: Activity, centrality: PartialFunction[Cell, Double]) extends Rule {
-    def apply(grid: Grid, random: Random): Grid = {
-      val (origin, urbanOrigin) = RandomMove.selectOrigin(grid, activity, random)
 
+  /**
+    *  Move activity from an urban cell to another
+    */
+  case class UrbanToUrbanRandomMove(activity: Activity, centrality: PartialFunction[Cell.Location, Double]) extends Rule {
+    def apply(grid: Grid, random: Random): Grid = {
+      val (origin, urbanOrigin) = selectOriginWithActivity(grid, activity, random)
+
+      /* Création d'une liste de cells URBAN de destination possibles */
       val destinations =
-        Grid.cells(grid).filter(_.get(grid) != origin.get(grid)).flatMap {
+        Grid.cells(grid).filter(c => !Cell.hasSameLocation(c.get(grid), origin.get(grid))).flatMap {
           cell =>
             cell.get(grid) match {
-              case urb: Urban => Some((cell -> urb, 1 - centrality(urb)))
+              case urb: Urban =>
+                val weight =  1 - centrality(urb.location)
+                val element = cell -> urb
+                Some((element, weight))
               case _ => None
             }
         }.toList
 
+      /* Choose the destination at random given the weights */
       val (destination, urbanDestination) = multinomial(destinations.toList)(random)
 
+      /* Update the grid by setting origin and destination with updated cells */
       (origin.set(Urban.removeActivity(urbanOrigin, activity)) andThen
         destination.set(Urban.addActivity(urbanDestination, activity))) (grid)
     }
   }
 
+  /**
+    * Move activity from a urban cell to a peripheral non-urban cell
+    * It transform the destination cell into a urban cell
+    */
   case class UrbanToNotUrbanRandomMove(activity: Activity) extends Rule {
     def apply(grid: Grid, random: Random): Grid = {
-      val (origin, urbanOrigin) = RandomMove.selectOrigin(grid, activity, random)
 
+      val (origin, urbanOrigin) = selectOriginWithActivity(grid, activity, random)
+
+      /* Select any non-urban cell on peripheral */
+      // TODO add effect of transport network
       val peripheral =
         for {
           (cell, neighbours) <- Grid.neighboursCells(grid)
+          if (cell.get(grid) match {
+            case _: NotUrban => true
+            case _ => false
+          })
           if neighbours.exists {
             _.get(grid) match {
               case _: Urban => true
@@ -148,11 +195,12 @@ object Dynamic {
           }
         } yield cell
 
-
+      /* Select the destination uniformly at random */
       val destination = peripheral(random.nextInt(peripheral.size))
+      val destinationCell = destination.get(grid)
 
       (origin.set(Urban.removeActivity(urbanOrigin, activity)) andThen
-        destination.set(Urban(Vector(activity)))) (grid)
+        (destination.set(Urban(destinationCell.location, Vector(activity))))) (grid)
     }
   }
 
@@ -177,13 +225,28 @@ case object Vertical extends Orientation
 
 case class Edge(orientation: Orientation, coordinate: Int)
 
-sealed trait Cell
 
-case object Water extends Cell
 
+sealed trait Cell {
+  def location: Cell.Location
+}
+
+// TODO add flow direction
+case class Water(location: Cell.Location) extends Cell
+/**
+  * Urban cell
+  *
+  * @param activities list of activities of the urban cell
+  */
+case class Urban(location: Cell.Location, activities: Vector[Activity]) extends Cell
+case class NotUrban(location: Cell.Location) extends Cell
 
 object Urban {
 
+  /**
+    * Remove an activity from a urban cell
+    * Identity if the activity has not been found in the cell
+    */
   def removeActivity(urban: Urban, activity: Activity): Urban = {
     urban.activities.indexOf(activity) match {
       case -1 => urban
@@ -193,16 +256,18 @@ object Urban {
     }
   }
 
+  /**
+    * Add an activity in a urban cell
+    */
   def addActivity(urban: Urban, activity: Activity) =
     urban.copy(activities = urban.activities ++ Seq(activity))
 
 }
 
-case class Urban(activities: Vector[Activity]) extends Cell
+
 
 sealed trait Activity
 case object Industry extends Activity
-case object NotUrban extends Cell
 
 object Grid {
 
@@ -211,6 +276,7 @@ object Grid {
       (i, j) <- coordinates(grid.side)
     } yield cell(i, j) -> neighbours(grid.side, i, j).map { case(ni, nj) => Grid.cell(ni, nj) }
 
+  /* définition d'un voisinage*/
   def neighbours(side: Int, i: Int, j: Int) =
     for {
       di <- (-1 to 1)
@@ -229,6 +295,7 @@ object Grid {
 
   def cells(g: Grid) = coordinates(g.side).map { case(i, j) => cell(i, j) }
 
+  /* Renvoie un couple set / get qui remplace / renvoie un cell particuliére dans une grille */
   def cell(x: Int, y: Int): monocle.Lens[Grid, Cell] =
     monocle.Lens { (g: Grid) => g.cells(x)(y) } {
       c => g =>
@@ -246,7 +313,8 @@ object Grid {
     Grid(cells, Vector.empty, side)
   }
 
-  def toCSV(centrality: PartialFunction[Cell, Double], grid: Grid) = {
+  /* export en CSV*/
+  def toCSV(centrality: PartialFunction[Cell.Location, Double], grid: Grid) = {
     val cellViews = List(Cell.toCentralityCSV(centrality)(_), Cell.toActivityCSV(_))
     val edges = grid.edges.map(Edge.toCSV).mkString(",")
 
@@ -263,6 +331,7 @@ object Grid {
 
 }
 
+/* Définition d'une classe Grid, composé de vecteurs, de edges et de side*/
 case class Grid(cells: Vector[Vector[Cell]], edges: Vector[Edge], side: Int)
 
 object Edge {
@@ -271,16 +340,21 @@ object Edge {
 }
 
 object Cell {
-  def toCentralityCSV(centrality: PartialFunction[Cell, Double])(cell: Cell) =
+
+  type Location = (Int, Int)
+
+  def hasSameLocation(c1: Cell, c2: Cell) = c1.location == c2.location
+
+  def toCentralityCSV(centrality: PartialFunction[Cell.Location, Double])(cell: Cell) =
     cell match {
-      case Water => s"Water(${centrality(cell)})"
-      case Urban(_) => s"Urban(${centrality(cell)})"
-      case NotUrban => s"NotUrban(${centrality(cell)})"
+      case _: Water => s"Water(${centrality(cell.location)})"
+      case _: Urban => s"Urban(${centrality(cell.location)})"
+      case _: NotUrban => s"NotUrban(${centrality(cell.location)})"
     }
 
   def toActivityCSV(cell: Cell) =
     cell match {
-      case Urban(activities) => s"Activities(${activities.mkString(" & ")})"
+      case c: Urban => s"Activities(${c.activities.mkString(" & ")})"
       case _ => ""
     }
 }
