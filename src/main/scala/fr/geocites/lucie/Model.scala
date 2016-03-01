@@ -22,38 +22,33 @@ import scala.util.Random
 
 object Model extends App {
 
-  /**
-    *  Fonction de calcul d'une valeur de centralité :
-    *  distance au centre (centerX,centerY)
-    *  normalisée entre 0 et 1 par rapport à la distance max au centre (citySide>Center)
-    *
-    * @param grid
-    * @param centerX
-    * @param centerY
-    * @return
-    */
-  def concentricCentrality(grid: Grid, centerX: Int, centerY: Int): PartialFunction[Cell.Location, Double] = {
-    def value(x: Int, y: Int): Double = {
-      val max = (grid.side * math.sqrt(2)) / 2
-      val relativeX = x - centerX
-      val relativeY = y - centerY
-      val distance = math.sqrt(relativeX * relativeX + relativeY * relativeY)
-      (max - distance) / max
-    }
 
-    val centralities =
-      for {
-        c <- Grid.cells(grid)
-      } yield
-        c.get(grid) match {
-          case u: Urban =>
-            val (x, y) = u.location
-            u.location -> value(x, y)
-          case c => c.location -> 0.0
-        }
+  def concentricCentrality(grid: Grid): PartialFunction[Cell.Location, Double] = {
+    def potentialMatrix(center: Cell) =
+      Vector.tabulate(grid.side, grid.side) {
+        (x, y) =>
+          val d = Cell.distance(center.location, (x, y))
+          1.0 / (1.0 + math.pow(d, 2.0))
+      }
 
-    centralities.toMap
+     def centers =
+       Grid.cells(grid).map(_.get(grid)).filter {
+         case u: Urban => u.activities.exists(_ == Center)
+         case _ => false
+       }
+
+     def aggregatedMatrix = {
+       val matrices = centers.map(potentialMatrix)
+
+       Vector.tabulate(grid.side, grid.side) {
+         (x, y) => (x, y) -> matrices.map(_(x)(y)).max
+       }
+     }
+
+      aggregatedMatrix.flatten.toMap
   }
+
+
 
   /* Fonction définition random d'un vecteur activité de type Industry ou vide */
   def activities(random: Random) =
@@ -73,8 +68,11 @@ object Model extends App {
     if(x == 0) Water(x -> y)
     else {
       if (x >= 3 && x <= 5 && y >= 7 && y <= 9) {
-        val emptyCell = Urban(x -> y, activities = Vector())
-        emptyCell.copy(activities = activities(random))
+        val acts =
+          if(x == 4 && y == 8) activities(random) ++ Seq(Center)
+          else activities(random)
+
+        Urban(x -> y, activities = acts)
       } else NotUrban(x -> y)
     }
 
@@ -85,7 +83,7 @@ object Model extends App {
   val grid = Grid.generate(side, stage1(side))
 
   /* Fonction de calcul de la valeur de centralité à partir de la fonction ci-dessus et de deux paramètes x,y*/
-  def centrality(grid: Grid) = concentricCentrality(grid, centerX = 4, centerY = 8)
+  def centrality(grid: Grid) = concentricCentrality(grid)
 
   /* Transitions rules */
   val intraIndustry = RuleBase(Dynamic.UrbanToUrbanRandomMove(Industry, centrality(grid)), 1.0)
@@ -265,9 +263,9 @@ object Urban {
 }
 
 
-
 sealed trait Activity
 case object Industry extends Activity
+case object Center extends Activity
 
 object Grid {
 
@@ -342,6 +340,9 @@ object Edge {
 object Cell {
 
   type Location = (Int, Int)
+
+  def distance(l1: Location, l2: Location) =
+    math.sqrt(math.pow(l2._1 - l1._1, 2) + math.pow(l2._2 - l1._2, 2))
 
   def hasSameLocation(c1: Cell, c2: Cell) = c1.location == c2.location
 
