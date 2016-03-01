@@ -62,18 +62,18 @@ object Model extends App {
   val side = 11
   val grid = Grid.generate(side, stage1(side))
 
-  def centrality = concentricCentrality(grid, centerX = 4, centerY = 8)
+  def centrality(grid: Grid) = concentricCentrality(grid, centerX = 4, centerY = 8)
 
-  val intraIndustry = RuleBase(Dynamic.UrbanToUrbanRandomMove(Industry, centrality), 1.0)
+  val intraIndustry = RuleBase(Dynamic.UrbanToUrbanRandomMove(Industry, centrality(grid)), 1.0)
   val extraIndustry = RuleBase(Dynamic.UrbanToNotUrbanRandomMove(Industry), 0.1)
 
   val finalGrid = Dynamic.simulate(grid, Vector(intraIndustry, extraIndustry), 100)
 
-  println(Grid.toCSV(centrality, grid))
+  println(Grid.toCSV(centrality(grid), grid))
 
   println("-- Final --")
 
-  println(Grid.toCSV(centrality, finalGrid))
+  println(Grid.toCSV(centrality(finalGrid), finalGrid))
 
 }
 
