@@ -48,8 +48,6 @@ object Model extends App {
       aggregatedMatrix.flatten.toMap
   }
 
-
-
   /* Fonction définition random d'un vecteur activité de type Industry ou vide */
   def activities(random: Random) =
     if(random.nextDouble() < 1.0) Vector(Industry) else Vector()
@@ -79,15 +77,24 @@ object Model extends App {
   implicit val rng = new Random(42)
 
   /* génération d'une grille de 11*11 cells*/
+  val wayAttractivity = 1.1
+  val peripheralNeigborhoudSize = 2
   val side = 11
-  val grid = Grid.generate(side, stage1(side))
+  val matrix =
+    Vector.tabulate(side, side) {
+      (i, j) => stage1(side)(i, j)
+    }
+
+  val edges = Vector(GenericWay(Vertical, 5), GenericWay(Horizontal, 4))
+
+  val grid = Grid(matrix, edges, side)
 
   /* Fonction de calcul de la valeur de centralité à partir de la fonction ci-dessus et de deux paramètes x,y*/
   def centrality(grid: Grid) = concentricCentrality(grid)
 
   /* Transitions rules */
   val intraIndustry = RuleBase(Dynamic.UrbanToUrbanRandomMove(Industry, centrality(grid)), 1.0)
-  val extraIndustry = RuleBase(Dynamic.UrbanToNotUrbanRandomMove(Industry), 0.1)
+  val extraIndustry = RuleBase(Dynamic.UrbanToNotUrbanRandomMove(Industry, wayAttractivity, peripheralNeigborhoudSize), 0.1)
 
   println(Grid.toCSV(centrality(grid), grid))
 
@@ -171,30 +178,44 @@ object Dynamic {
     * Move activity from a urban cell to a peripheral non-urban cell
     * It transform the destination cell into a urban cell
     */
-  case class UrbanToNotUrbanRandomMove(activity: Activity) extends Rule {
+  case class UrbanToNotUrbanRandomMove(activity: Activity, wayAttractivity: Double, peripheralNeigborhoudSize: Int) extends Rule {
     def apply(grid: Grid, random: Random): Grid = {
-
       val (origin, urbanOrigin) = selectOriginWithActivity(grid, activity, random)
 
-      /* Select any non-urban cell on peripheral */
-      // TODO add effect of transport network
-      val peripheral =
-        for {
-          (cell, neighbours) <- Grid.neighboursCells(grid)
-          if (cell.get(grid) match {
-            case _: NotUrban => true
-            case _ => false
-          })
-          if neighbours.exists {
-            _.get(grid) match {
-              case _: Urban => true
-              case _ => false
+      def peripheralAttractivity(x: Int, y: Int): Double =
+        grid.cells(x)(y) match {
+          case _: NotUrban =>
+            def peripheral =
+              Grid.neighbourCells (grid, x -> y, peripheralNeigborhoudSize)exists {
+                _.get (grid) match {
+                  case _: Urban => true
+                  case _ => false
+                }
+              }
+            if(peripheral) 1.0 else 0.0
+          case _ => 0.0
+        }
+
+      def transportAttractivity(x: Int, y: Int): Double = {
+        def nearWay = grid.ways.exists {
+          case GenericWay(orientation, c) =>
+            orientation match {
+              case Horizontal => c - 1 <= y && c >= y
+              case Vertical =>  c - 1 <= x && c >= x
             }
-          }
-        } yield cell
+        }
+        if(nearWay) wayAttractivity else 0.0
+      }
+
+
+      val aggregatedAttractivity =
+        Vector.tabulate(grid.side, grid.side) {
+          (x, y) =>
+            Grid.cell(x, y) -> peripheralAttractivity(x, y) * transportAttractivity(x, y)
+        }
 
       /* Select the destination uniformly at random */
-      val destination = peripheral(random.nextInt(peripheral.size))
+      val destination = multinomial(aggregatedAttractivity.flatten.toList)(random)
       val destinationCell = destination.get(grid)
 
       (origin.set(Urban.removeActivity(urbanOrigin, activity)) andThen
@@ -216,13 +237,6 @@ object Dynamic {
   }
 
 }
-
-sealed trait Orientation
-case object Horizontal extends Orientation
-case object Vertical extends Orientation
-
-case class Edge(orientation: Orientation, coordinate: Int)
-
 
 
 sealed trait Cell {
@@ -269,21 +283,24 @@ case object Center extends Activity
 
 object Grid {
 
-  def neighboursCells(grid: Grid) =
-    for {
-      (i, j) <- coordinates(grid.side)
-    } yield cell(i, j) -> neighbours(grid.side, i, j).map { case(ni, nj) => Grid.cell(ni, nj) }
+  def neighbourCells(grid: Grid, l: Cell.Location, size: Int) =
+    neighbours(grid.side, l, size).map {
+      case(i, j) => cell(i, j)
+    }
 
   /* définition d'un voisinage*/
-  def neighbours(side: Int, i: Int, j: Int) =
+  def neighbours(side: Int, location: Cell.Location, size: Int) = {
+    val (i, j) = location
+
     for {
-      di <- (-1 to 1)
-      dj <- (-1 to 1)
-      if(di != 0 && dj != 0)
+      di <- (-size to size)
+      dj <- (-size to size)
+      if (di != 0 && dj != 0)
       ni = i + di
       nj = j + dj
-      if(ni >= 0 && nj >= 0 && ni < side && nj < side)
+      if (ni >= 0 && nj >= 0 && ni < side && nj < side)
     } yield (i + di, j + dj)
+  }
 
   def coordinates(side: Int) =
     for {
@@ -302,19 +319,10 @@ object Grid {
         g.copy(cells = newCells)
     }
 
-  def generate(side: Int, centrality: (Int, Int) => Cell) = {
-    val cells =
-      Vector.tabulate(side, side) {
-        (i, j) => centrality(i, j)
-      }
-
-    Grid(cells, Vector.empty, side)
-  }
-
   /* export en CSV*/
   def toCSV(centrality: PartialFunction[Cell.Location, Double], grid: Grid) = {
     val cellViews = List(Cell.toCentralityCSV(centrality)(_), Cell.toActivityCSV(_))
-    val edges = grid.edges.map(Edge.toCSV).mkString(",")
+    val edges = grid.ways.map(Edge.toCSV).mkString(",")
 
     s"""${cellViews.map{ v => Grid.view(grid, v)}.mkString("\n\n")}
        |
@@ -330,12 +338,19 @@ object Grid {
 }
 
 /* Définition d'une classe Grid, composé de vecteurs, de edges et de side*/
-case class Grid(cells: Vector[Vector[Cell]], edges: Vector[Edge], side: Int)
+case class Grid(cells: Vector[Vector[Cell]], ways: Vector[GenericWay], side: Int)
 
 object Edge {
-  def toCSV(edge: Edge) =
+  def toCSV(edge: GenericWay) =
     s"${edge.orientation},${edge.coordinate}"
 }
+
+sealed trait Orientation
+case object Horizontal extends Orientation
+case object Vertical extends Orientation
+
+
+case class GenericWay(orientation: Orientation, coordinate: Int)
 
 object Cell {
 
