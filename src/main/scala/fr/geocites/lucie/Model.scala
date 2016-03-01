@@ -19,9 +19,7 @@ package fr.geocites.lucie
 
 import scala.annotation.tailrec
 import scala.util.Random
-
-
-
+import better.files._
 
 object Model extends App {
 
@@ -33,21 +31,21 @@ object Model extends App {
           1.0 / (1.0 + math.pow(d, 2.0))
       }
 
-     def centers =
-       Grid.cells(grid).map(_.get(grid)).filter {
-         case u: Urban => u.activities.exists(_ == Center)
-         case _ => false
-       }
-
-     def aggregatedMatrix = {
-       val matrices = centers.map(potentialMatrix)
-
-       Vector.tabulate(grid.side, grid.side) {
-         (x, y) => (x, y) -> matrices.map(_(x)(y)).max
-       }
+    def centers =
+     Grid.cells(grid).map(_.get(grid)).filter {
+       case u: Urban => u.activities.exists(_ == Center)
+       case _ => false
      }
 
-      aggregatedMatrix.flatten.toMap
+    def aggregatedMatrix = {
+      val matrices = centers.map(potentialMatrix)
+
+      Vector.tabulate(grid.side, grid.side) {
+        (x, y) => (x, y) -> matrices.map(_(x)(y)).max
+      }
+    }
+
+    aggregatedMatrix.flatten.toMap
   }
 
   /* Fonction définition random d'un vecteur activité de type Industry ou vide */
@@ -95,15 +93,71 @@ object Model extends App {
   /* Fonction de calcul de la valeur de centralité à partir de la fonction ci-dessus et de deux paramètes x,y*/
   def centrality: Grid.Centrality = (grid: Grid) => concentricCentrality(grid)
 
-
   /* Transitions rules */
   val intraIndustry = RuleBase(Dynamic.UrbanToUrbanRandomMove(Industry, centrality), weight = 1.0)
   val extraIndustry = RuleBase(Dynamic.UrbanToNotUrbanRandomMove(Industry, wayAttractivity, peripheralNeigborhoudSize, centrality), weight = 0.1)
 
   println(Grid.toCSV(centrality(grid), grid))
 
+  val baseDir = File("/tmp/lucie/")
+
+   def toCSV[T](v: Vector[Vector[T]]) =
+     v.map(_.mkString(",")).mkString("\n")
+
+  def logger(event: Logger.Event): Unit =
+    event match {
+      case s: Logger.Step =>
+
+        val stepDir = baseDir / s.step.toString
+        stepDir.createDirectories()
+
+        def industry =
+          s.grid.cells.map {
+            line =>
+              line.map {
+                case u: Urban => u.activities.count(_ == Industry)
+                case _ => 0
+              }
+          }
+
+        stepDir / "industry.csv" < toCSV(industry)
+
+        def cells =
+          s.grid.cells.map {
+            line =>
+              line.map {
+                case _: Urban => "u"
+                case _: NotUrban => "n"
+                case _: Water => "w"
+              }
+          }
+
+        stepDir / "cells.csv" < toCSV(cells)
+
+        stepDir / "attractivity.csv" < toCSV {
+          Vector.tabulate(s.grid.side, s.grid.side) {
+            (x, y) => Dynamic.aggregatedAttractivity(grid, peripheralNeigborhoudSize, wayAttractivity)(x, y)
+          }
+        }
+
+        stepDir / "centrality.csv" < toCSV {
+          val gridCentrality = centrality(s.grid)
+          Vector.tabulate(grid.side, grid.side) { (x, y) => gridCentrality(x, y) }
+        }
+    }
+
+  baseDir.createDirectories()
+  baseDir / "ways.csv" < grid.ways.map(Edge.toCSV).mkString("\n")
+  baseDir / "parameters.csv" <
+    s"""wayAttractivity,${wayAttractivity}
+       |peripheralNeigborhoudSize,${peripheralNeigborhoudSize}
+     """.stripMargin
+
+
   /* Simulate the dynamic */
-  val finalGrid = Dynamic.simulate(grid, Vector(intraIndustry, extraIndustry), 100)
+  val finalGrid = Dynamic.simulate(grid, Vector(intraIndustry, extraIndustry), 100, logger)
+
+
 
   println("-- Final --")
   println(Grid.toCSV(centrality(finalGrid), finalGrid))
@@ -112,7 +166,6 @@ object Model extends App {
 
 case class RuleBase(rule: Rule, weight: Double)
 trait Rule extends ((Grid, Random) => Grid)
-
 
 object Dynamic {
 
@@ -146,7 +199,6 @@ object Dynamic {
   }
 
 
-
   /**
     *  Move activity from an urban cell to another
     */
@@ -178,6 +230,37 @@ object Dynamic {
     }
   }
 
+  def peripheralAttractivity(grid: Grid, peripheralNeigborhoudSize: Int)(x: Int, y: Int): Double =
+    grid.cells(x)(y) match {
+      case _: NotUrban =>
+        def peripheral =
+          Grid.neighbourCells (grid, x -> y, peripheralNeigborhoudSize)exists {
+            _.get (grid) match {
+              case _: Urban => true
+              case _ => false
+            }
+          }
+        if(peripheral) 1.0 else 0.0
+      case _ => 0.0
+    }
+
+  def transportAttractivity(grid: Grid, wayAttractivity: Double)(x: Int, y: Int): Double = {
+    def nearWay = grid.ways.exists {
+      case GenericWay(orientation, c) =>
+        orientation match {
+          case Horizontal => c - 1 <= y && c >= y
+          case Vertical =>  c - 1 <= x && c >= x
+        }
+    }
+    if(nearWay) wayAttractivity else 1.0
+  }
+
+
+  def aggregatedAttractivity(grid: Grid, peripheralNeigborhoudSize: Int, wayAttractivity: Double)(x: Int, y: Int) =
+    peripheralAttractivity(grid, peripheralNeigborhoudSize)(x, y) *
+      transportAttractivity(grid, wayAttractivity)(x, y)
+
+
   /**
     * Move activity from a urban cell to a peripheral non-urban cell
     * It transform the destination cell into a urban cell
@@ -192,40 +275,9 @@ object Dynamic {
       val gridCentrality = centrality(grid)
       val (origin, urbanOrigin) = randomCellWithActivity(grid, activity, random, gridCentrality)
 
-      def peripheralAttractivity(x: Int, y: Int): Double =
-        grid.cells(x)(y) match {
-          case _: NotUrban =>
-            def peripheral =
-              Grid.neighbourCells (grid, x -> y, peripheralNeigborhoudSize)exists {
-                _.get (grid) match {
-                  case _: Urban => true
-                  case _ => false
-                }
-              }
-            if(peripheral) 1.0 else 0.0
-          case _ => 0.0
-        }
-
-      def transportAttractivity(x: Int, y: Int): Double = {
-        def nearWay = grid.ways.exists {
-          case GenericWay(orientation, c) =>
-            orientation match {
-              case Horizontal => c - 1 <= y && c >= y
-              case Vertical =>  c - 1 <= x && c >= x
-            }
-        }
-        if(nearWay) wayAttractivity else 0.0
-      }
-
-
-      val aggregatedAttractivity =
-        Vector.tabulate(grid.side, grid.side) {
-          (x, y) =>
-            Grid.cell(x, y) -> peripheralAttractivity(x, y) * transportAttractivity(x, y)
-        }
-
       /* Select the destination uniformly at random */
-      val destination = multinomial(aggregatedAttractivity.flatten.toList)(random)
+      val attractivityMatrix = Vector.tabulate(grid.side, grid.side) { (x, y) => Grid.cell(x, y) -> aggregatedAttractivity(grid, peripheralNeigborhoudSize, wayAttractivity)(x, y) }
+      val destination = multinomial(attractivityMatrix.flatten.toList)(random)
       val destinationCell = destination.get(grid)
 
       (origin.set(Urban.removeActivity(urbanOrigin, activity)) andThen
@@ -233,16 +285,18 @@ object Dynamic {
     }
   }
 
-  def simulate(grid: Grid, rules: Vector[RuleBase], steps: Int)(implicit random: Random) = {
+  def simulate(grid: Grid, rules: Vector[RuleBase], steps: Int, logger: Logger.Logger)(implicit random: Random) = {
     def selectRule = multinomial(rules.map{ case RuleBase(r, w) => (r, w)}.toList)
 
-    def simulate0(currentStep: Int, grid: Grid): Grid =
+    def simulate0(currentStep: Int, grid: Grid): Grid = {
+      logger(Logger.Step(currentStep, grid))
       if(currentStep >= steps) grid
       else {
         val appliedRule = selectRule
         val newGrid = appliedRule(grid, random)
-        simulate0(currentStep +1, newGrid)
+        simulate0(currentStep + 1, newGrid)
       }
+    }
     simulate0(0, grid)
   }
 
@@ -387,4 +441,38 @@ object Cell {
     }
 }
 
+object Logger {
+  sealed trait Event
+  case class Step(step: Int, grid: Grid) extends Event
+
+  type Logger = Event => Unit
+}
+
+/*
+object Analyse {
+  def moran[T](quantity: Vector[Vector[Double]], neighbors: Matrix[T] ⇒ Iterator[(T, T, Double)]): Double = {
+    val totalQuantity = quantity.flatten.sum
+    val averageQuantity = totalQuantity / quantity.flatten.size
+
+    def numerator =
+      neighbors(state).map {
+        case (cellI, cellJ, weight) ⇒
+          val term1 = if (quantity(cellI) == 0) 0.0 else (quantity(cellI) - averageQuantity.toDouble)
+          val term2 = if (quantity(cellJ) == 0) 0.0 else (quantity(cellJ) - averageQuantity.toDouble)
+          weight * term1 * term2
+      }.sum
+
+    def denominator =
+      flatCells.map {
+        cell ⇒
+          if (quantity(cell) <= 0) 0
+          else math.pow(quantity(cell) - averageQuantity.toDouble, 2)
+      }.sum
+
+    val totalWeight = neighbors(state).map { case (_, _, weight) ⇒ weight }.sum
+
+    if (denominator.toDouble <= 0) 0
+    else (state.numberOfCells.toDouble / totalWeight.toDouble) * (numerator / denominator)
+  }
+}*/
 
