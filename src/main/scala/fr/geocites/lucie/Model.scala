@@ -20,8 +20,10 @@ package fr.geocites.lucie
 import scala.annotation.tailrec
 import scala.util.Random
 
-object Model extends App {
 
+
+
+object Model extends App {
 
   def concentricCentrality(grid: Grid): PartialFunction[Cell.Location, Double] = {
     def potentialMatrix(center: Cell) =
@@ -79,6 +81,7 @@ object Model extends App {
   /* génération d'une grille de 11*11 cells*/
   val wayAttractivity = 1.1
   val peripheralNeigborhoudSize = 2
+
   val side = 11
   val matrix =
     Vector.tabulate(side, side) {
@@ -90,11 +93,12 @@ object Model extends App {
   val grid = Grid(matrix, edges, side)
 
   /* Fonction de calcul de la valeur de centralité à partir de la fonction ci-dessus et de deux paramètes x,y*/
-  def centrality(grid: Grid) = concentricCentrality(grid)
+  def centrality: Grid.Centrality = (grid: Grid) => concentricCentrality(grid)
+
 
   /* Transitions rules */
-  val intraIndustry = RuleBase(Dynamic.UrbanToUrbanRandomMove(Industry, centrality(grid)), 1.0)
-  val extraIndustry = RuleBase(Dynamic.UrbanToNotUrbanRandomMove(Industry, wayAttractivity, peripheralNeigborhoudSize), 0.1)
+  val intraIndustry = RuleBase(Dynamic.UrbanToUrbanRandomMove(Industry, centrality), weight = 1.0)
+  val extraIndustry = RuleBase(Dynamic.UrbanToNotUrbanRandomMove(Industry, wayAttractivity, peripheralNeigborhoudSize, centrality), weight = 0.1)
 
   println(Grid.toCSV(centrality(grid), grid))
 
@@ -126,31 +130,31 @@ object Dynamic {
     multinomial0(values)(random.nextDouble() * values.map(_._2).sum)
   }
 
-  /**
-    * Randomly select origin of a move among cells containing a given activity
-    *
-    */
-  def selectOriginWithActivity(grid: Grid, activity: Activity, random: Random) = {
-    val origins =
+
+  def randomCellWithActivity(grid: Grid, activity: Activity, random: Random, centrality: PartialFunction[Cell.Location, Double]) = {
+    val selectedCells =
       Grid.cells(grid).flatMap { cell =>
         cell.get(grid) match {
           case urban: Urban =>
-            if(urban.activities.contains(activity)) Some(cell -> urban)
+            if(urban.activities.contains(activity)) Some((cell -> urban) -> centrality(urban.location))
             else None
           case _ => None
         }
       }
 
-    origins(random.nextInt(origins.size))
+    multinomial(selectedCells.toList)(random)
   }
+
 
 
   /**
     *  Move activity from an urban cell to another
     */
-  case class UrbanToUrbanRandomMove(activity: Activity, centrality: PartialFunction[Cell.Location, Double]) extends Rule {
+  case class UrbanToUrbanRandomMove(activity: Activity, centrality: Grid.Centrality) extends Rule {
     def apply(grid: Grid, random: Random): Grid = {
-      val (origin, urbanOrigin) = selectOriginWithActivity(grid, activity, random)
+      val gridCentrality = centrality(grid)
+
+      val (origin, urbanOrigin) = randomCellWithActivity(grid, activity, random, gridCentrality)
 
       /* Création d'une liste de cells URBAN de destination possibles */
       val destinations =
@@ -158,7 +162,7 @@ object Dynamic {
           cell =>
             cell.get(grid) match {
               case urb: Urban =>
-                val weight =  1 - centrality(urb.location)
+                val weight =  1 - gridCentrality(urb.location)
                 val element = cell -> urb
                 Some((element, weight))
               case _ => None
@@ -178,9 +182,15 @@ object Dynamic {
     * Move activity from a urban cell to a peripheral non-urban cell
     * It transform the destination cell into a urban cell
     */
-  case class UrbanToNotUrbanRandomMove(activity: Activity, wayAttractivity: Double, peripheralNeigborhoudSize: Int) extends Rule {
+  case class UrbanToNotUrbanRandomMove(
+    activity: Activity,
+    wayAttractivity: Double,
+    peripheralNeigborhoudSize: Int,
+    centrality: Grid.Centrality) extends Rule {
+
     def apply(grid: Grid, random: Random): Grid = {
-      val (origin, urbanOrigin) = selectOriginWithActivity(grid, activity, random)
+      val gridCentrality = centrality(grid)
+      val (origin, urbanOrigin) = randomCellWithActivity(grid, activity, random, gridCentrality)
 
       def peripheralAttractivity(x: Int, y: Int): Double =
         grid.cells(x)(y) match {
@@ -282,6 +292,8 @@ case object Industry extends Activity
 case object Center extends Activity
 
 object Grid {
+
+  type Centrality = Grid => PartialFunction[Cell.Location, Double]
 
   def neighbourCells(grid: Grid, l: Cell.Location, size: Int) =
     neighbours(grid.side, l, size).map {
