@@ -7,7 +7,7 @@ object Lucie extends Build {
 
   lazy val root = Project("lucie", file(".")) settings (
     version := "1.0-SNAPSHOT",
-    scalaVersion := "2.11.7",
+    scalaVersion := "2.11.8",
     libraryDependencies += "org.apache.commons" % "commons-math3" % "3.6",
     libraryDependencies += "com.github.julien-truffaut"  %%  "monocle-core"    % monocleVersion,
     libraryDependencies += "com.github.julien-truffaut"  %%  "monocle-generic" % monocleVersion,
