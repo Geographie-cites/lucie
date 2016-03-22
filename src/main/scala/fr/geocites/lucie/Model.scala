@@ -23,6 +23,8 @@ import better.files._
 import monocle.macros._
 
 import scala.reflect.ClassTag
+import rule._
+import cell._
 
 object Model extends App {
 
@@ -104,10 +106,10 @@ object Model extends App {
   def centrality: Grid.Centrality = (grid: Grid) => concentricCentrality(grid)
 
   /* Transitions rules */
-  val intraIndustry = Dynamic.urbanToUrbanRandomMove(Industry, centrality) -> 0.9
+  val intraIndustry = urbanToUrbanRandomMove(Industry, centrality) -> 0.9
 
   val extraIndustry =
-    Dynamic.urbanToNotUrbanRandomMove(
+    urbanToNotUrbanRandomMove(
       Industry,
       wayAttractivity,
       peripheralNeigborhoudSize,
@@ -116,13 +118,13 @@ object Model extends App {
     ) -> 0.1
 
 
-  val downgrade = Dynamic.downgradeNearIndustryHabitations(0.05)
-  val upgrade = Dynamic.upgradeHabitations(0.01)
+  val downgrade = downgradeNearIndustryHabitations(0.05)
+  val upgrade = upgradeHabitations(0.01)
 
   val evolutionRule = new Rule {
     override def apply(grid: Grid, random: Random): Grid = {
       val composideRule =
-        (Dynamic.multinomialChoice(intraIndustry, extraIndustry)(_: Grid, random)) andThen
+        (multinomialChoice(intraIndustry, extraIndustry)(_: Grid, random)) andThen
           (downgrade(_, random)) andThen
           (upgrade(_, random))
       composideRule(grid)
@@ -148,7 +150,6 @@ object Model extends App {
   def logger(event: Logger.Event): Unit =
     event match {
       case s: Logger.Step =>
-
         val stepDir = baseDir / s.step.toString
         stepDir.createDirectories()
 
@@ -166,16 +167,15 @@ object Model extends App {
           }
 
         def attractivity(i: Int, j: Int) =
-          Dynamic.aggregatedAttractivity(s.grid, peripheralNeigborhoudSize, wayAttractivity)(i, j).toString
+          aggregatedAttractivity(s.grid, peripheralNeigborhoudSize, wayAttractivity)(i, j).toString
 
         val currentCentrality = centrality(s.grid)
         def gridCentrality(i: Int, j: Int) = currentCentrality(i, j).toString
 
-        def level(i: Int, j: Int) = grid.cells(i)(j) match {
+        def level(i: Int, j: Int) = s.grid.cells(i)(j) match {
           case u: Urban => u.habitatLevel.toString
           case _ => ""
         }
-
 
         stepDir / "cells.csv" < Seq("x", "y", "type", "industry", "attractivity", "centrality", "level").mkString(",") + "\n"
         stepDir / "cells.csv" << toCSV(s.grid.side, s.grid.side)(cellType, industry, attractivity, gridCentrality, level)
@@ -203,149 +203,7 @@ object Model extends App {
 }
 
 
-trait Rule extends ((Grid, Random) => Grid)
-
 object Dynamic {
-
-  def multinomialChoice(rules: (Rule, Double)*) = new Rule {
-    override def apply(v1: Grid, v2: Random): Grid =  {
-      val rule = multinomial(rules.map{ case(r, w) => (r, w) }.toList)(v2)
-      rule(v1, v2)
-    }
-  }
-
-  def multinomial[T](values: List[(T, Double)])(implicit random: Random): T = {
-    @tailrec def multinomial0[T](values: List[(T, Double)])(draw: Double): T = {
-      values match {
-        case Nil ⇒ throw new RuntimeException("List should never be empty.")
-        case (bs, _) :: Nil ⇒ bs
-        case (bs, weight) :: tail ⇒
-          if (draw <= weight) bs
-          else multinomial0(tail)(draw - weight)
-      }
-    }
-
-    multinomial0(values)(random.nextDouble() * values.map(_._2).sum)
-  }
-
-
-  def randomCellWithActivity(grid: Grid, activity: Activity, random: Random, centrality: PartialFunction[Cell.Location, Double]) = {
-    val selectedCells =
-      Grid.cells(grid).collect { case (x: Urban) => x }.flatMap { urban =>
-        if(urban.activities.contains(activity)) Some(urban -> centrality(urban.location))
-        else None
-      }
-
-    multinomial(selectedCells.toList)(random)
-  }
-
-
-  /**
-    *  Move activity from an urban cell to another
-    */
-  def urbanToUrbanRandomMove(activity: Activity, centrality: Grid.Centrality) = new Rule {
-    def apply(grid: Grid, random: Random): Grid = {
-      val gridCentrality = centrality(grid)
-
-      val urbanOrigin = randomCellWithActivity(grid, activity, random, gridCentrality)
-
-      /* Création d'une liste de cells URBAN de destination possibles */
-      val destinations =
-        Grid.cells(grid).
-          filter(c => !Cell.hasSameLocation(c, urbanOrigin)).
-          collect { case (x: Urban) => x }.map { urb =>
-          val weight =  1 - gridCentrality(urb.location)
-          (urb, weight)
-        }
-
-      /* Choose the destination at random given the weights */
-      val urbanDestination = multinomial(destinations.toList)(random)
-
-      /* Update the grid by setting origin and destination with updated cells */
-      (Grid.lens(urbanOrigin).set(Urban.removeActivity(urbanOrigin, activity)) andThen
-        Grid.lens(urbanDestination).set(Urban.addActivity(urbanDestination, activity))) (grid)
-    }
-  }
-
-  def peripheralAttractivity(grid: Grid, peripheralNeigborhoudSize: Int)(x: Int, y: Int): Double =
-    grid.cells(x)(y) match {
-      case _: NotUrban =>
-        def peripheral =
-          Grid.neighbourCells(grid, x -> y, peripheralNeigborhoudSize).exists {
-            case _: Urban => true
-            case _ => false
-          }
-        if(peripheral) 1.0 else 0.0
-      case _ => 0.0
-    }
-
-  def transportAttractivity(grid: Grid, wayAttractivity: Double)(x: Int, y: Int): Double = {
-    def nearWay = grid.ways.exists {
-      case GenericWay(orientation, c) =>
-        orientation match {
-          case Horizontal => c - 1 <= y && c >= y
-          case Vertical =>  c - 1 <= x && c >= x
-        }
-    }
-    if(nearWay) wayAttractivity else 1.0
-  }
-
-  def aggregatedAttractivity(grid: Grid, peripheralNeigborhoudSize: Int, wayAttractivity: Double)(x: Int, y: Int) =
-    peripheralAttractivity(grid, peripheralNeigborhoudSize)(x, y) *
-      transportAttractivity(grid, wayAttractivity)(x, y)
-
-  /**
-    * Move activity from a urban cell to a peripheral non-urban cell
-    * It transform the destination cell into a urban cell
-    */
-  def urbanToNotUrbanRandomMove(
-    activity: Activity,
-    wayAttractivity: Double,
-    peripheralNeigborhoudSize: Int,
-    centrality: Grid.Centrality,
-    buildUrbanCell: (Cell.Location, Activity) => Cell) = new Rule {
-
-    def apply(grid: Grid, random: Random): Grid = {
-      val gridCentrality = centrality(grid)
-      val urbanOrigin = randomCellWithActivity(grid, activity, random, gridCentrality)
-
-      /* Select the destination uniformly at random */
-      val attractivityMatrix =
-        Grid.cells(grid).map { c =>
-          val (x, y) = c.location
-          c -> (aggregatedAttractivity(grid, peripheralNeigborhoudSize, wayAttractivity)(x, y))
-        }.collect { case x@(_: NotUrban, _) => x }
-
-      val destination = multinomial(attractivityMatrix.toList)(random)
-
-      (Grid.lens(urbanOrigin).set(Urban.removeActivity(urbanOrigin, activity)) andThen
-        (Grid.lens(destination).set(buildUrbanCell(destination.location, activity)))) (grid)
-    }
-  }
-
-  def downgradeNearIndustryHabitations(p: Double) = new Rule {
-    override def apply(grid: Grid, rng: Random): Grid = {
-      Grid.cells(grid).collect { case x: Urban => x }.foldLeft(grid) { (g, u) =>
-        if (u.activities.exists(_ == Industry) && rng.nextDouble() < p)
-          (Grid.lens(u) composePrism
-            Urban.prism composeLens
-            Urban.habitatLevel modify HabitatLevel.downgrade) (g)
-        else g
-      }
-    }
-  }
-
-  def upgradeHabitations(p: Double) = new Rule {
-    override def apply(grid: Grid, rng: Random): Grid = {
-      Grid.cells(grid).collect { case x: Urban => x }.foldLeft(grid) { (g, u) =>
-        if (u.activities.forall(_ != Industry) && rng.nextDouble() < p)
-          (Grid.lens(u) composePrism
-            Urban.prism composeLens
-            Urban.habitatLevel modify HabitatLevel.upgrade)(g)
-        else g
-      }
-    }
-  }
 
   def simulate(grid: Grid, rule: Rule, steps: Int, logger: Logger.Logger)(implicit random: Random) = {
 
@@ -362,66 +220,6 @@ object Dynamic {
 
 }
 
-
-sealed trait Cell {
-  def location: Cell.Location
-}
-
-// TODO add flow direction
-case class Water(location: Cell.Location) extends Cell
-/**
-  * Urban cell
-  *
-  * @param activities list of activities of the urban cell
-  */
-@Lenses case class Urban(location: Cell.Location, activities: Vector[Activity], habitatLevel: HabitatLevel) extends Cell
-case class NotUrban(location: Cell.Location) extends Cell
-
-object Urban {
-
-  /**
-    * Remove an activity from a urban cell
-    * Identity if the activity has not been found in the cell
-    */
-  def removeActivity(urban: Urban, activity: Activity): Urban = {
-    urban.activities.indexOf(activity) match {
-      case -1 => urban
-      case i =>
-        val newActivities = urban.activities patch (from = i, patch = Nil, replaced = 1)
-        urban.copy(activities = newActivities)
-    }
-  }
-
-  /**
-    * Add an activity in a urban cell
-    */
-  def addActivity(urban: Urban, activity: Activity) =
-    urban.copy(activities = urban.activities ++ Seq(activity))
-
-  def prism = monocle.Prism[Cell, Urban] {
-    case u: Urban => Some(u)
-    case _ => None
-  } (identity)
-
-}
-
-object HabitatLevel {
-
-  def upgrade(l: HabitatLevel) =
-    l match {
-      case Elite => Elite
-      case Middle => Elite
-      case Poor => Middle
-    }
-
-  def downgrade(l: HabitatLevel) =
-    l match {
-      case Elite => Middle
-      case Middle => Poor
-      case Poor => Poor
-    }
-
-}
 
 sealed trait Activity
 case object Industry extends Activity
@@ -510,29 +308,6 @@ case object Vertical extends Orientation
 
 
 case class GenericWay(orientation: Orientation, coordinate: Int)
-
-object Cell {
-
-  type Location = (Int, Int)
-
-  def distance(l1: Location, l2: Location) =
-    math.sqrt(math.pow(l2._1 - l1._1, 2) + math.pow(l2._2 - l1._2, 2))
-
-  def hasSameLocation(c1: Cell, c2: Cell) = c1.location == c2.location
-
-  def toCentralityCSV(centrality: PartialFunction[Cell.Location, Double])(cell: Cell) =
-    cell match {
-      case _: Water => s"Water(${centrality(cell.location)})"
-      case _: Urban => s"Urban(${centrality(cell.location)})"
-      case _: NotUrban => s"NotUrban(${centrality(cell.location)})"
-    }
-
-  def toActivityCSV(cell: Cell) =
-    cell match {
-      case c: Urban => s"Activities(${c.activities.mkString(" & ")})"
-      case _ => ""
-    }
-}
 
 object Logger {
   sealed trait Event
