@@ -20,6 +20,7 @@ package fr.geocites.lucie
 import scala.annotation.tailrec
 import scala.util.Random
 import better.files._
+import monocle.macros._
 
 object Model extends App {
 
@@ -32,7 +33,7 @@ object Model extends App {
       }
 
     def centers =
-     Grid.cells(grid).map(_.get(grid)).filter {
+     Grid.cells(grid).filter {
        case u: Urban => u.activities.exists(_ == Center)
        case _ => false
      }
@@ -52,6 +53,7 @@ object Model extends App {
   def activities(random: Random) =
     if(random.nextDouble() < 1.0) Vector(Industry) else Vector()
 
+
   /**
     * Fonction de génération de la grille de départ
     *
@@ -65,10 +67,14 @@ object Model extends App {
   def stage1(side: Int)(x: Int, y: Int)(implicit random: Random) =
     if(x == 0) Water(x -> y)
     else {
-      if (x >= 3 && x <= 5 && y >= 7 && y <= 9) {
+      if (x >= 3 && x <= 9 && y >= 7 && y <= 13) {
         val acts =
-          if(x == 4 && y == 8) activities(random) ++ Seq(Center)
-          else activities(random)
+          if(x == 6 && y == 10) activities(random) ++ Seq(Center, Habitat(Habitat.Elite))
+          else {
+            val acts = activities(random)
+            if(acts.exists(_ == Industry)) acts ++ Seq(Habitat(Habitat.Poor))
+            else acts ++ Seq(Habitat(Habitat.Middle))
+          }
 
         Urban(x -> y, activities = acts)
       } else NotUrban(x -> y)
@@ -76,11 +82,10 @@ object Model extends App {
 
   implicit val rng = new Random(42)
 
-  /* génération d'une grille de 11*11 cells*/
   val wayAttractivity = 1.1
   val peripheralNeigborhoudSize = 2
 
-  val side = 11
+  val side = 21
   val matrix =
     Vector.tabulate(side, side) {
       (i, j) => stage1(side)(i, j)
@@ -94,8 +99,23 @@ object Model extends App {
   def centrality: Grid.Centrality = (grid: Grid) => concentricCentrality(grid)
 
   /* Transitions rules */
-  val intraIndustry = RuleBase(Dynamic.UrbanToUrbanRandomMove(Industry, centrality), weight = 1.0)
-  val extraIndustry = RuleBase(Dynamic.UrbanToNotUrbanRandomMove(Industry, wayAttractivity, peripheralNeigborhoudSize, centrality), weight = 0.1)
+  val intraIndustry = Dynamic.urbanToUrbanRandomMove(Industry, centrality) -> 1.0
+
+  val extraIndustry =
+    Dynamic.urbanToNotUrbanRandomMove(
+      Industry,
+      wayAttractivity,
+      peripheralNeigborhoudSize,
+      centrality,
+      (location, activity) => Urban(location, Vector(activity, Habitat(Habitat.Poor)))
+    ) -> 0.1
+
+  /*val evolutionRule = new Rule {
+    override def apply(v1: Grid, v2: Random): Grid = {
+      val industry = Dynamic.multinomialChoice(intraIndustry, extraIndustry)
+
+    }
+  }*/
 
   println(Grid.toCSV(centrality(grid), grid))
 
@@ -152,19 +172,29 @@ object Model extends App {
 
 
   /* Simulate the dynamic */
-  val finalGrid = Dynamic.simulate(grid, Vector(intraIndustry, extraIndustry), 100, logger)
-
-
+  val finalGrid =
+    Dynamic.simulate(
+      grid,
+      Dynamic.multinomialChoice(intraIndustry, extraIndustry),
+      100,
+      logger)
 
   println("-- Final --")
   println(Grid.toCSV(centrality(finalGrid), finalGrid))
 
 }
 
-case class RuleBase(rule: Rule, weight: Double)
+
 trait Rule extends ((Grid, Random) => Grid)
 
 object Dynamic {
+
+  def multinomialChoice(rules: (Rule, Double)*) = new Rule {
+    override def apply(v1: Grid, v2: Random): Grid =  {
+      val rule = multinomial(rules.map{ case(r, w) => (r, w) }.toList)(v2)
+      rule(v1, v2)
+    }
+  }
 
   def multinomial[T](values: List[(T, Double)])(implicit random: Random): T = {
     @tailrec def multinomial0[T](values: List[(T, Double)])(draw: Double): T = {
@@ -183,13 +213,9 @@ object Dynamic {
 
   def randomCellWithActivity(grid: Grid, activity: Activity, random: Random, centrality: PartialFunction[Cell.Location, Double]) = {
     val selectedCells =
-      Grid.cells(grid).flatMap { cell =>
-        cell.get(grid) match {
-          case urban: Urban =>
-            if(urban.activities.contains(activity)) Some((cell -> urban) -> centrality(urban.location))
-            else None
-          case _ => None
-        }
+      Grid.cells(grid).collect { case (x: Urban) => x }.flatMap { urban =>
+        if(urban.activities.contains(activity)) Some(urban -> centrality(urban.location))
+        else None
       }
 
     multinomial(selectedCells.toList)(random)
@@ -199,31 +225,27 @@ object Dynamic {
   /**
     *  Move activity from an urban cell to another
     */
-  case class UrbanToUrbanRandomMove(activity: Activity, centrality: Grid.Centrality) extends Rule {
+  def urbanToUrbanRandomMove(activity: Activity, centrality: Grid.Centrality) = new Rule {
     def apply(grid: Grid, random: Random): Grid = {
       val gridCentrality = centrality(grid)
 
-      val (origin, urbanOrigin) = randomCellWithActivity(grid, activity, random, gridCentrality)
+      val urbanOrigin = randomCellWithActivity(grid, activity, random, gridCentrality)
 
       /* Création d'une liste de cells URBAN de destination possibles */
       val destinations =
-        Grid.cells(grid).filter(c => !Cell.hasSameLocation(c.get(grid), origin.get(grid))).flatMap {
-          cell =>
-            cell.get(grid) match {
-              case urb: Urban =>
-                val weight =  1 - gridCentrality(urb.location)
-                val element = cell -> urb
-                Some((element, weight))
-              case _ => None
-            }
-        }.toList
+        Grid.cells(grid).
+          filter(c => !Cell.hasSameLocation(c, urbanOrigin)).
+          collect { case (x: Urban) => x }.map { urb =>
+          val weight =  1 - gridCentrality(urb.location)
+          (urb, weight)
+        }
 
       /* Choose the destination at random given the weights */
-      val (destination, urbanDestination) = multinomial(destinations.toList)(random)
+      val urbanDestination = multinomial(destinations.toList)(random)
 
       /* Update the grid by setting origin and destination with updated cells */
-      (origin.set(Urban.removeActivity(urbanOrigin, activity)) andThen
-        destination.set(Urban.addActivity(urbanDestination, activity))) (grid)
+      (Grid.lens(urbanOrigin).set(Urban.removeActivity(urbanOrigin, activity)) andThen
+        Grid.lens(urbanDestination).set(Urban.addActivity(urbanDestination, activity))) (grid)
     }
   }
 
@@ -231,11 +253,9 @@ object Dynamic {
     grid.cells(x)(y) match {
       case _: NotUrban =>
         def peripheral =
-          Grid.neighbourCells (grid, x -> y, peripheralNeigborhoudSize)exists {
-            _.get (grid) match {
-              case _: Urban => true
-              case _ => false
-            }
+          Grid.neighbourCells(grid, x -> y, peripheralNeigborhoudSize).exists {
+            case _: Urban => true
+            case _ => false
           }
         if(peripheral) 1.0 else 0.0
       case _ => 0.0
@@ -252,45 +272,58 @@ object Dynamic {
     if(nearWay) wayAttractivity else 1.0
   }
 
-
   def aggregatedAttractivity(grid: Grid, peripheralNeigborhoudSize: Int, wayAttractivity: Double)(x: Int, y: Int) =
     peripheralAttractivity(grid, peripheralNeigborhoudSize)(x, y) *
       transportAttractivity(grid, wayAttractivity)(x, y)
-
 
   /**
     * Move activity from a urban cell to a peripheral non-urban cell
     * It transform the destination cell into a urban cell
     */
-  case class UrbanToNotUrbanRandomMove(
+  def urbanToNotUrbanRandomMove(
     activity: Activity,
     wayAttractivity: Double,
     peripheralNeigborhoudSize: Int,
-    centrality: Grid.Centrality) extends Rule {
+    centrality: Grid.Centrality,
+    buildUrbanCell: (Cell.Location, Activity) => Cell) = new Rule {
 
     def apply(grid: Grid, random: Random): Grid = {
       val gridCentrality = centrality(grid)
-      val (origin, urbanOrigin) = randomCellWithActivity(grid, activity, random, gridCentrality)
+      val urbanOrigin = randomCellWithActivity(grid, activity, random, gridCentrality)
 
       /* Select the destination uniformly at random */
-      val attractivityMatrix = Vector.tabulate(grid.side, grid.side) { (x, y) => Grid.cell(x, y) -> aggregatedAttractivity(grid, peripheralNeigborhoudSize, wayAttractivity)(x, y) }
-      val destination = multinomial(attractivityMatrix.flatten.toList)(random)
-      val destinationCell = destination.get(grid)
+      val attractivityMatrix =
+        Grid.cells(grid).map { c =>
+          val (x, y) = c.location
+          c -> (aggregatedAttractivity(grid, peripheralNeigborhoudSize, wayAttractivity)(x, y))
+        }.collect { case x@(_: NotUrban, _) => x }
 
-      (origin.set(Urban.removeActivity(urbanOrigin, activity)) andThen
-        (destination.set(Urban(destinationCell.location, Vector(activity))))) (grid)
+      val destination = multinomial(attractivityMatrix.toList)(random)
+
+      (Grid.lens(urbanOrigin).set(Urban.removeActivity(urbanOrigin, activity)) andThen
+        (Grid.lens(destination).set(buildUrbanCell(destination.location, activity)))) (grid)
     }
   }
 
-  def simulate(grid: Grid, rules: Vector[RuleBase], steps: Int, logger: Logger.Logger)(implicit random: Random) = {
-    def selectRule = multinomial(rules.map{ case RuleBase(r, w) => (r, w)}.toList)
+//  def downgradeHabitation() = new Rule {
+//    override def apply(grid: Grid, v2: Random): Grid = {
+//      Grid.cells(grid).map {
+//        c =>
+//          c.get(grid) match  {
+//            case u: Urban =>
+//          }
+//      }
+//    }
+//  }
+
+
+  def simulate(grid: Grid, rule: Rule, steps: Int, logger: Logger.Logger)(implicit random: Random) = {
 
     def simulate0(currentStep: Int, grid: Grid): Grid = {
       logger(Logger.Step(currentStep, grid))
       if(currentStep >= steps) grid
       else {
-        val appliedRule = selectRule
-        val newGrid = appliedRule(grid, random)
+        val newGrid = rule(grid, random)
         simulate0(currentStep + 1, newGrid)
       }
     }
@@ -311,7 +344,7 @@ case class Water(location: Cell.Location) extends Cell
   *
   * @param activities list of activities of the urban cell
   */
-case class Urban(location: Cell.Location, activities: Vector[Activity]) extends Cell
+@Lenses case class Urban(location: Cell.Location, activities: Vector[Activity]) extends Cell
 case class NotUrban(location: Cell.Location) extends Cell
 
 object Urban {
@@ -337,10 +370,35 @@ object Urban {
 
 }
 
+object Habitat {
+
+  def upgrade(l: Level) =
+    l match {
+      case Elite => Elite
+      case Middle => Elite
+      case Poor => Middle
+    }
+
+  def downgrade(l: Level) =
+    l match {
+      case Elite => Middle
+      case Middle => Poor
+      case Poor => Poor
+    }
+
+  sealed trait Level
+  case object Elite extends Level
+  case object Middle extends Level
+  case object Poor extends Level
+
+
+
+}
 
 sealed trait Activity
 case object Industry extends Activity
 case object Center extends Activity
+@Lenses case class Habitat(level: Habitat.Level) extends Activity
 
 object Grid {
 
@@ -348,7 +406,7 @@ object Grid {
 
   def neighbourCells(grid: Grid, l: Cell.Location, size: Int) =
     neighbours(grid.side, l, size).map {
-      case(i, j) => cell(i, j)
+      case(i, j) => grid.cells(i)(j)
     }
 
   /* définition d'un voisinage*/
@@ -371,16 +429,22 @@ object Grid {
       j <- 0 until side
     } yield (i, j)
 
-  def cells(g: Grid) = coordinates(g.side).map { case(i, j) => cell(i, j) }
+  def cellLenses(g: Grid) = coordinates(g.side).map { case(i, j) => lens(i, j) }
+  def cells(g: Grid) = g.cells.flatten
+
+
+  def lens(cell: Cell): monocle.Lens[Grid, Cell] = lens(cell.location)
 
   /* Renvoie un couple set / get qui remplace / renvoie un cell particuliére dans une grille */
-  def cell(x: Int, y: Int): monocle.Lens[Grid, Cell] =
+  def lens(location: Cell.Location): monocle.Lens[Grid, Cell] = {
+    val (x, y) = location
     monocle.Lens { (g: Grid) => g.cells(x)(y) } {
       c => g =>
         val line = g.cells(x)
         val newCells = g.cells.updated(x, line.updated(y, c))
         g.copy(cells = newCells)
     }
+  }
 
   /* export en CSV*/
   def toCSV(centrality: PartialFunction[Cell.Location, Double], grid: Grid) = {
@@ -472,7 +536,6 @@ object Analyse {
 
 
 object Convolution {
-
 
   import org.apache.commons.math3.complex.Complex
   import org.apache.commons.math3.transform.{ TransformType, DftNormalization, FastFourierTransformer }

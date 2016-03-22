@@ -13,6 +13,7 @@ object Lucie extends Build {
     libraryDependencies += "com.github.julien-truffaut"  %%  "monocle-generic" % monocleVersion,
     libraryDependencies += "com.github.julien-truffaut"  %%  "monocle-macro"   % monocleVersion,
     libraryDependencies += "com.github.pathikrit" %% "better-files" % "2.15.0",
+    addCompilerPlugin("org.scalamacros" % "paradise" % "2.1.0" cross CrossVersion.full),
     resolvers += Resolver.sonatypeRepo("snapshots"),
     resolvers += "bintray-djspiewak-maven" at "https://dl.bintray.com/djspiewak/maven"
   )
