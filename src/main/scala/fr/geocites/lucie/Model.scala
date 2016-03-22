@@ -24,6 +24,8 @@ import monocle.macros._
 
 object Model extends App {
 
+  val initialIndustry = 0.5
+
   def concentricCentrality(grid: Grid): PartialFunction[Cell.Location, Double] = {
     def potentialMatrix(center: Cell) =
       Vector.tabulate(grid.side, grid.side) {
@@ -51,7 +53,7 @@ object Model extends App {
 
   /* Fonction définition random d'un vecteur activité de type Industry ou vide */
   def activities(random: Random) =
-    if(random.nextDouble() < 1.0) Vector(Industry) else Vector()
+    if(random.nextDouble() < initialIndustry) Vector(Industry) else Vector()
 
 
   /**
@@ -69,14 +71,15 @@ object Model extends App {
     else {
       if (x >= 3 && x <= 9 && y >= 7 && y <= 13) {
         val acts =
-          if(x == 6 && y == 10) activities(random) ++ Seq(Center, Habitat(Habitat.Elite))
-          else {
-            val acts = activities(random)
-            if(acts.exists(_ == Industry)) acts ++ Seq(Habitat(Habitat.Poor))
-            else acts ++ Seq(Habitat(Habitat.Middle))
-          }
+          if(x == 6 && y == 10) activities(random) ++ Seq(Center)
+          else activities(random)
 
-        Urban(x -> y, activities = acts)
+        val level =
+          if(acts.contains(Center)) Elite
+          else if(acts.contains(Industry)) Poor
+          else Middle
+
+        Urban(x -> y, activities = acts, habitatLevel = level)
       } else NotUrban(x -> y)
     }
 
@@ -99,7 +102,7 @@ object Model extends App {
   def centrality: Grid.Centrality = (grid: Grid) => concentricCentrality(grid)
 
   /* Transitions rules */
-  val intraIndustry = Dynamic.urbanToUrbanRandomMove(Industry, centrality) -> 1.0
+  val intraIndustry = Dynamic.urbanToUrbanRandomMove(Industry, centrality) -> 0.9
 
   val extraIndustry =
     Dynamic.urbanToNotUrbanRandomMove(
@@ -107,15 +110,22 @@ object Model extends App {
       wayAttractivity,
       peripheralNeigborhoudSize,
       centrality,
-      (location, activity) => Urban(location, Vector(activity, Habitat(Habitat.Poor)))
+      (location, activity) => Urban(location, Vector(activity), Poor)
     ) -> 0.1
 
-  /*val evolutionRule = new Rule {
-    override def apply(v1: Grid, v2: Random): Grid = {
-      val industry = Dynamic.multinomialChoice(intraIndustry, extraIndustry)
 
+  val downgrade = Dynamic.downgradeNearIndustryHabitations(0.05)
+  val upgrade = Dynamic.upgradeHabitations(0.01)
+
+  val evolutionRule = new Rule {
+    override def apply(grid: Grid, random: Random): Grid = {
+      val composideRule =
+        (Dynamic.multinomialChoice(intraIndustry, extraIndustry)(_: Grid, random)) andThen
+          (downgrade(_, random)) andThen
+          (upgrade(_, random))
+      composideRule(grid)
     }
-  }*/
+  }
 
   println(Grid.toCSV(centrality(grid), grid))
 
@@ -159,8 +169,14 @@ object Model extends App {
         val currentCentrality = centrality(s.grid)
         def gridCentrality(i: Int, j: Int) = currentCentrality(i, j).toString
 
-        stepDir / "cells.csv" < Seq("x", "y", "type", "industry", "attractivity", "centrality").mkString(",") + "\n"
-        stepDir / "cells.csv" << toCSV(s.grid.side, s.grid.side)(cellType, industry, attractivity, gridCentrality)
+        def level(i: Int, j: Int) = grid.cells(i)(j) match {
+          case u: Urban => u.habitatLevel.toString
+          case _ => ""
+        }
+
+
+        stepDir / "cells.csv" < Seq("x", "y", "type", "industry", "attractivity", "centrality", "level").mkString(",") + "\n"
+        stepDir / "cells.csv" << toCSV(s.grid.side, s.grid.side)(cellType, industry, attractivity, gridCentrality, level)
     }
 
   baseDir.createDirectories()
@@ -175,7 +191,7 @@ object Model extends App {
   val finalGrid =
     Dynamic.simulate(
       grid,
-      Dynamic.multinomialChoice(intraIndustry, extraIndustry),
+      evolutionRule,
       100,
       logger)
 
@@ -305,17 +321,25 @@ object Dynamic {
     }
   }
 
-//  def downgradeHabitation() = new Rule {
-//    override def apply(grid: Grid, v2: Random): Grid = {
-//      Grid.cells(grid).map {
-//        c =>
-//          c.get(grid) match  {
-//            case u: Urban =>
-//          }
-//      }
-//    }
-//  }
+  def downgradeNearIndustryHabitations(p: Double) = new Rule {
+    override def apply(grid: Grid, rng: Random): Grid = {
+      Grid.cells(grid).collect { case x: Urban => x }.foldLeft(grid) { (g, u) =>
+        if (u.activities.exists(_ == Industry) && rng.nextDouble() < p)
+          Grid.lens(u).set(u.copy(habitatLevel = HabitatLevel.downgrade(u.habitatLevel)))(g)
+        else g
+      }
+    }
+  }
 
+  def upgradeHabitations(p: Double) = new Rule {
+    override def apply(grid: Grid, rng: Random): Grid = {
+      Grid.cells(grid).collect { case x: Urban => x }.foldLeft(grid) { (g, u) =>
+        if (u.activities.forall(_ != Industry) && rng.nextDouble() < p)
+          Grid.lens(u).set(u.copy(habitatLevel = HabitatLevel.upgrade(u.habitatLevel)))(g)
+        else g
+      }
+    }
+  }
 
   def simulate(grid: Grid, rule: Rule, steps: Int, logger: Logger.Logger)(implicit random: Random) = {
 
@@ -344,7 +368,7 @@ case class Water(location: Cell.Location) extends Cell
   *
   * @param activities list of activities of the urban cell
   */
-@Lenses case class Urban(location: Cell.Location, activities: Vector[Activity]) extends Cell
+@Lenses case class Urban(location: Cell.Location, activities: Vector[Activity], habitatLevel: HabitatLevel) extends Cell
 case class NotUrban(location: Cell.Location) extends Cell
 
 object Urban {
@@ -370,35 +394,32 @@ object Urban {
 
 }
 
-object Habitat {
+object HabitatLevel {
 
-  def upgrade(l: Level) =
+  def upgrade(l: HabitatLevel) =
     l match {
       case Elite => Elite
       case Middle => Elite
       case Poor => Middle
     }
 
-  def downgrade(l: Level) =
+  def downgrade(l: HabitatLevel) =
     l match {
       case Elite => Middle
       case Middle => Poor
       case Poor => Poor
     }
 
-  sealed trait Level
-  case object Elite extends Level
-  case object Middle extends Level
-  case object Poor extends Level
-
-
-
 }
 
 sealed trait Activity
 case object Industry extends Activity
 case object Center extends Activity
-@Lenses case class Habitat(level: Habitat.Level) extends Activity
+sealed trait HabitatLevel
+case object Elite extends HabitatLevel
+case object Middle extends HabitatLevel
+case object Poor extends HabitatLevel
+
 
 object Grid {
 
