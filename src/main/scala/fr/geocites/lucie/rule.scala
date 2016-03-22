@@ -21,6 +21,8 @@ import scala.annotation.tailrec
 import scala.util.Random
 
 import cell._
+import grid._
+import activity._
 
 object rule {
 
@@ -61,7 +63,7 @@ object rule {
   /**
     *  Move activity from an urban cell to another
     */
-  def urbanToUrbanRandomMove(activity: Activity, centrality: Grid.Centrality) = new Rule {
+  def urbanToUrbanRandomMove(activity: Activity, centrality: Centrality) = new Rule {
     def apply(grid: Grid, random: Random): Grid = {
       val gridCentrality = centrality(grid)
 
@@ -117,11 +119,11 @@ object rule {
     * It transform the destination cell into a urban cell
     */
   def urbanToNotUrbanRandomMove(
-                                 activity: Activity,
-                                 wayAttractivity: Double,
-                                 peripheralNeigborhoudSize: Int,
-                                 centrality: Grid.Centrality,
-                                 buildUrbanCell: (Cell.Location, Activity) => Cell) = new Rule {
+    activity: Activity,
+    wayAttractivity: Double,
+    peripheralNeigborhoudSize: Int,
+    centrality: Centrality,
+    buildUrbanCell: (Cell.Location, Activity) => Urban) = new Rule {
 
     def apply(grid: Grid, random: Random): Grid = {
       val gridCentrality = centrality(grid)

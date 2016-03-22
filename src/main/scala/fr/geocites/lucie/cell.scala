@@ -18,6 +18,7 @@
 package fr.geocites.lucie
 
 import monocle.macros.Lenses
+import activity._
 
 object cell {
 
@@ -104,4 +105,11 @@ object cell {
       }
 
   }
+
+  sealed trait HabitatLevel
+  case object Elite extends HabitatLevel
+  case object Middle extends HabitatLevel
+  case object Poor extends HabitatLevel
 }
+
+

@@ -17,8 +17,30 @@
   */
 package fr.geocites.lucie
 
-object activity {
-  sealed trait Activity
-  case object Industry extends Activity
-  case object Center extends Activity
+import cell._
+import grid._
+
+object export {
+  /* export en CSV*/
+  def toCSV(centrality: PartialFunction[Cell.Location, Double], grid: Grid) = {
+    val cellViews = List(Cell.toCentralityCSV(centrality)(_), Cell.toActivityCSV(_))
+    val edges = grid.ways.map(Edge.toCSV).mkString(",")
+
+    s"""${cellViews.map{ v => view(grid, v)}.mkString("\n\n")}
+       |
+      |$edges""".stripMargin
+  }
+
+  def view(grid: Grid, view: Cell => String) = {
+    val csvGrid = grid.cells.map(_.map(view).mkString(",")).mkString("\n")
+
+    s"""$csvGrid""".stripMargin
+  }
+
+  object Logger {
+    sealed trait Event
+    case class Step(step: Int, grid: Grid) extends Event
+
+    type Logger = Event => Unit
+  }
 }
