@@ -101,8 +101,17 @@ object Model extends App {
 
   val baseDir = File("/tmp/lucie/")
 
-   def toCSV[T](v: Vector[Vector[T]]) =
-     v.map(_.mkString(",")).mkString("\n")
+  type ColumnValue = (Int, Int) => String
+
+   def toCSV(x: Int, y: Int)(values: ColumnValue*) = {
+     def lines =
+       for {
+         i <- 0 until x
+         j <- 0 until y
+         vs = values.map(_(i, j))
+       } yield (Seq(i, j) ++ vs).mkString(",")
+     lines.mkString("\n")
+   }
 
   def logger(event: Logger.Event): Unit =
     event match {
@@ -111,39 +120,27 @@ object Model extends App {
         val stepDir = baseDir / s.step.toString
         stepDir.createDirectories()
 
-        def industry =
-          s.grid.cells.map {
-            line =>
-              line.map {
-                case u: Urban => u.activities.count(_ == Industry)
-                case _ => 0
-              }
+        def cellType(i: Int, j: Int) =
+          s.grid.cells(i)(j) match {
+            case _: Urban => "u"
+            case _: NotUrban => "n"
+            case _: Water => "w"
           }
 
-        stepDir / "industry.csv" < toCSV(industry)
-
-        def cells =
-          s.grid.cells.map {
-            line =>
-              line.map {
-                case _: Urban => "u"
-                case _: NotUrban => "n"
-                case _: Water => "w"
-              }
+        def industry(i: Int, j: Int) =
+          s.grid.cells(i)(j) match {
+            case u: Urban => u.activities.count(_ == Industry).toString
+            case _ => "0"
           }
 
-        stepDir / "cells.csv" < toCSV(cells)
+        def attractivity(i: Int, j: Int) =
+          Dynamic.aggregatedAttractivity(s.grid, peripheralNeigborhoudSize, wayAttractivity)(i, j).toString
 
-        stepDir / "attractivity.csv" < toCSV {
-          Vector.tabulate(s.grid.side, s.grid.side) {
-            (x, y) => Dynamic.aggregatedAttractivity(grid, peripheralNeigborhoudSize, wayAttractivity)(x, y)
-          }
-        }
+        val currentCentrality = centrality(s.grid)
+        def gridCentrality(i: Int, j: Int) = currentCentrality(i, j).toString
 
-        stepDir / "centrality.csv" < toCSV {
-          val gridCentrality = centrality(s.grid)
-          Vector.tabulate(grid.side, grid.side) { (x, y) => gridCentrality(x, y) }
-        }
+        stepDir / "cells.csv" < Seq("x", "y", "type", "industry", "attractivity", "centrality").mkString(",") + "\n"
+        stepDir / "cells.csv" << toCSV(s.grid.side, s.grid.side)(cellType, industry, attractivity, gridCentrality)
     }
 
   baseDir.createDirectories()
