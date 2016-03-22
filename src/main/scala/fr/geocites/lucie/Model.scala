@@ -22,6 +22,8 @@ import scala.util.Random
 import better.files._
 import monocle.macros._
 
+import scala.reflect.ClassTag
+
 object Model extends App {
 
   val initialIndustry = 0.5
@@ -325,7 +327,9 @@ object Dynamic {
     override def apply(grid: Grid, rng: Random): Grid = {
       Grid.cells(grid).collect { case x: Urban => x }.foldLeft(grid) { (g, u) =>
         if (u.activities.exists(_ == Industry) && rng.nextDouble() < p)
-          Grid.lens(u).set(u.copy(habitatLevel = HabitatLevel.downgrade(u.habitatLevel)))(g)
+          (Grid.lens(u) composePrism
+            Urban.prism composeLens
+            Urban.habitatLevel modify HabitatLevel.downgrade) (g)
         else g
       }
     }
@@ -335,7 +339,9 @@ object Dynamic {
     override def apply(grid: Grid, rng: Random): Grid = {
       Grid.cells(grid).collect { case x: Urban => x }.foldLeft(grid) { (g, u) =>
         if (u.activities.forall(_ != Industry) && rng.nextDouble() < p)
-          Grid.lens(u).set(u.copy(habitatLevel = HabitatLevel.upgrade(u.habitatLevel)))(g)
+          (Grid.lens(u) composePrism
+            Urban.prism composeLens
+            Urban.habitatLevel modify HabitatLevel.upgrade)(g)
         else g
       }
     }
@@ -391,6 +397,11 @@ object Urban {
     */
   def addActivity(urban: Urban, activity: Activity) =
     urban.copy(activities = urban.activities ++ Seq(activity))
+
+  def prism = monocle.Prism[Cell, Urban] {
+    case u: Urban => Some(u)
+    case _ => None
+  } (identity)
 
 }
 
