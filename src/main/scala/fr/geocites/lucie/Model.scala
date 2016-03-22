@@ -451,20 +451,17 @@ object Analyse {
   import org.apache.commons.math3.util.MathArrays
 
   /**
-    * Moran index using fast convolution.
-    *
-    * @param matrix
-    * @return
+    * Moran index using fast convolution. Matrix should be a square matrix.
     */
   def moran(matrix: Vector[Vector[Double]]): Double = {
     val n = matrix.length
     val flatConf = matrix.flatten
     val popMean = flatConf.sum / flatConf.length
     val centeredConf = matrix.map { r => r.map { d => d - popMean }.toArray }.toArray
-    val variance = MathArrays.ebeMultiply(centeredConf.flatten.toArray, centeredConf.flatten.toArray).sum
+    val variance = MathArrays.ebeMultiply(centeredConf.flatten, centeredConf.flatten).sum
     val weights = spatialWeights(2 * n - 1)
     val totWeight = Convolution.convolution2D(Array.fill(n, n) { 1.0 }, weights).flatten.sum
-    flatConf.length / (totWeight * variance) * MathArrays.ebeMultiply(centeredConf.flatten.toArray, Convolution.convolution2D(centeredConf, weights).flatten).sum
+    flatConf.length / (totWeight * variance) * MathArrays.ebeMultiply(centeredConf.flatten, Convolution.convolution2D(centeredConf, weights).flatten).sum
   }
 
   def spatialWeights(n: Int): Array[Array[Double]] = {
