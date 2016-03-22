@@ -109,7 +109,7 @@ object Model extends App {
          i <- 0 until x
          j <- 0 until y
          vs = values.map(_(i, j))
-       } yield (Seq(i, j) ++ vs).mkString(",")
+       } yield (Seq(x - i - 1, j) ++ vs).mkString(",")
      lines.mkString("\n")
    }
 
