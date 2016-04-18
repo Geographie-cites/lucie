@@ -15,7 +15,7 @@
   * along with this program.  If not, see <http://www.gnu.org/licenses/>.
   *
   */
-package fr.geocite.lucie
+package fr.geocites.lucie
 
 import monocle.macros._
 
@@ -45,4 +45,15 @@ package object data {
   case object Elite extends HabitatLevel
   case object Middle extends HabitatLevel
   case object Poor extends HabitatLevel
+
+  /* Définition d'une classe Grid, composé de vecteurs, de edges et de side*/
+  case class Grid(cells: Vector[Vector[Cell]], ways: Vector[GenericWay], side: Int)
+
+  sealed trait Orientation
+  case object Horizontal extends Orientation
+  case object Vertical extends Orientation
+
+
+  case class GenericWay(orientation: Orientation, coordinate: Int)
+
 }

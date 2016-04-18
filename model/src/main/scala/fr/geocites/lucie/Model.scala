@@ -22,7 +22,7 @@ import scala.util.Random
 import better.files._
 import rule._
 import cell._
-import fr.geocite.lucie.data._
+import fr.geocites.lucie.data._
 import grid._
 
 object Model extends App {
@@ -38,7 +38,7 @@ object Model extends App {
       }
 
     def centers =
-     Grid.cells(grid).filter {
+     cells(grid).filter {
        case u: Urban => u.activities.exists(_ == Center)
        case _ => false
      }

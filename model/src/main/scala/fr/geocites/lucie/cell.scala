@@ -17,7 +17,7 @@
   */
 package fr.geocites.lucie
 
-import fr.geocite.lucie.data._
+import fr.geocites.lucie.data._
 
 object cell {
 

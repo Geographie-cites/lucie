@@ -18,7 +18,7 @@
 package fr.geocites.lucie
 
 import grid._
-import fr.geocite.lucie.data._
+import fr.geocites.lucie.data._
 
 object export {
   /* export en CSV*/

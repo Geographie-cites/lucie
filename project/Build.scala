@@ -20,8 +20,8 @@ object Lucie extends Build  {
     organization := "fr.geocites.lucie",
     resolvers ++=
       Seq(
-      Resolver.sonatypeRepo("snapshots"),
-      "Typesafe repository" at "http://repo.typesafe.com/typesafe/releases/"
+        Resolver.sonatypeRepo("snapshots"),
+        "Typesafe repository" at "http://repo.typesafe.com/typesafe/releases/"
       ),
     libraryDependencies ++= Seq (
       "com.github.julien-truffaut"  %%  "monocle-core"    % monocleVersion,
@@ -51,7 +51,7 @@ object Lucie extends Build  {
     "Typesafe repository" at "http://repo.typesafe.com/typesafe/releases/"
   )
 
-  lazy val shared = project.in(file("gui/shared")) settings(commonSettings: _*)
+  lazy val shared = Project("gui-shared", file("gui/shared")) settings(commonSettings: _*) dependsOn(data) enablePlugins (ScalaJSPlugin)
 
   lazy val client = Project(
     "gui-client",
