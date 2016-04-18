@@ -12,31 +12,33 @@ import sbt._
 
 object Lucie extends Build  {
 
+  lazy val monocleVersion = "1.2.0"
+
   lazy val commonSettings = Seq(
     version := "1.0-SNAPSHOT",
     scalaVersion := "2.11.8",
-    organization := "fr.iscpif.lucie",
+    organization := "fr.geocites.lucie",
     resolvers ++=
       Seq(
       Resolver.sonatypeRepo("snapshots"),
       "Typesafe repository" at "http://repo.typesafe.com/typesafe/releases/"
-      )
+      ),
+    libraryDependencies ++= Seq (
+      "com.github.julien-truffaut"  %%  "monocle-core"    % monocleVersion,
+      "com.github.julien-truffaut"  %%  "monocle-generic" % monocleVersion,
+      "com.github.julien-truffaut"  %%  "monocle-macro"   % monocleVersion
+    ),
+    addCompilerPlugin("org.scalamacros" % "paradise" % "2.1.0" cross CrossVersion.full)
   )
 
-
-  lazy val monocleVersion = "1.2.0"
-
-  lazy val model = Project("model", file(".")) settings(commonSettings: _*) settings (
-    version := "1.0-SNAPSHOT",
+  lazy val model = Project("model", file("model")) settings(commonSettings: _*) settings (
     libraryDependencies += "org.apache.commons" % "commons-math3" % "3.6",
-    libraryDependencies += "com.github.julien-truffaut"  %%  "monocle-core"    % monocleVersion,
-    libraryDependencies += "com.github.julien-truffaut"  %%  "monocle-generic" % monocleVersion,
-    libraryDependencies += "com.github.julien-truffaut"  %%  "monocle-macro"   % monocleVersion,
     libraryDependencies += "com.github.pathikrit" %% "better-files" % "2.15.0",
-    addCompilerPlugin("org.scalamacros" % "paradise" % "2.1.0" cross CrossVersion.full),
     resolvers += Resolver.sonatypeRepo("snapshots"),
     resolvers += "bintray-djspiewak-maven" at "https://dl.bintray.com/djspiewak/maven"
-  )
+  ) dependsOn(data)
+
+  lazy val data = Project("data", file("data")) settings(commonSettings: _*) enablePlugins (ScalaJSPlugin)
 
   val scalatraVersion = "2.4.0"
   val jettyVersion = "9.3.7.v20160115"
@@ -53,7 +55,7 @@ object Lucie extends Build  {
 
   lazy val client = Project(
     "gui-client",
-    file("client")) settings(commonSettings: _*) settings(
+    file("gui/client")) settings(commonSettings: _*) settings(
       resolvers in ThisBuild ++= Resolvers,
       skip in packageJSDependencies := false,
       jsDependencies += "org.webjars" % "d3js" % "3.5.12" / "d3.min.js",

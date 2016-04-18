@@ -19,10 +19,9 @@ package fr.geocites.lucie
 
 import scala.annotation.tailrec
 import scala.util.Random
-
 import cell._
+import fr.geocite.lucie.data._
 import grid._
-import activity._
 
 object rule {
 
@@ -49,7 +48,7 @@ object rule {
 
 
 
-  def randomCellWithActivity(grid: Grid, activity: Activity, random: Random, centrality: PartialFunction[Cell.Location, Double]) = {
+  def randomCellWithActivity(grid: Grid, activity: Activity, random: Random, centrality: PartialFunction[Location, Double]) = {
     val selectedCells =
       Grid.cells(grid).collect { case (x: Urban) => x }.flatMap { urban =>
         if(urban.activities.contains(activity)) Some(urban -> centrality(urban.location))
@@ -72,7 +71,7 @@ object rule {
       /* Création d'une liste de cells URBAN de destination possibles */
       val destinations =
         Grid.cells(grid).
-          filter(c => !Cell.hasSameLocation(c, urbanOrigin)).
+          filter(c => !hasSameLocation(c, urbanOrigin)).
           collect { case (x: Urban) => x }.map { urb =>
           val weight =  1 - gridCentrality(urb.location)
           (urb, weight)
@@ -82,8 +81,8 @@ object rule {
       val urbanDestination = multinomial(destinations.toList)(random)
 
       /* Update the grid by setting origin and destination with updated cells */
-      (Grid.lens(urbanOrigin).set(Urban.removeActivity(urbanOrigin, activity)) andThen
-        Grid.lens(urbanDestination).set(Urban.addActivity(urbanDestination, activity))) (grid)
+      (Grid.lens(urbanOrigin).set (removeActivity(urbanOrigin, activity)) andThen
+        Grid.lens(urbanDestination).set(addActivity(urbanDestination, activity))) (grid)
     }
   }
 
@@ -123,7 +122,7 @@ object rule {
     wayAttractivity: Double,
     peripheralNeigborhoudSize: Int,
     centrality: Centrality,
-    buildUrbanCell: (Cell.Location, Activity) => Urban) = new Rule {
+    buildUrbanCell: (Location, Activity) => Urban) = new Rule {
 
     def apply(grid: Grid, random: Random): Grid = {
       val gridCentrality = centrality(grid)
@@ -138,7 +137,7 @@ object rule {
 
       val destination = multinomial(attractivityMatrix.toList)(random)
 
-      (Grid.lens(urbanOrigin).set(Urban.removeActivity(urbanOrigin, activity)) andThen
+      (Grid.lens(urbanOrigin).set(removeActivity(urbanOrigin, activity)) andThen
         (Grid.lens(destination).set(buildUrbanCell(destination.location, activity)))) (grid)
     }
   }
@@ -148,8 +147,8 @@ object rule {
       Grid.cells(grid).collect { case x: Urban => x }.foldLeft(grid) { (g, u) =>
         if (u.activities.exists(_ == Industry) && rng.nextDouble() < p)
           (Grid.lens(u) composePrism
-            Urban.prism composeLens
-            Urban.habitatLevel modify HabitatLevel.downgrade) (g)
+            urbanPrism composeLens
+            Urban.habitatLevel modify downgrade) (g)
         else g
       }
     }
@@ -160,8 +159,8 @@ object rule {
       Grid.cells(grid).collect { case x: Urban => x }.foldLeft(grid) { (g, u) =>
         if (u.activities.forall(_ != Industry) && rng.nextDouble() < p)
           (Grid.lens(u) composePrism
-            Urban.prism composeLens
-            Urban.habitatLevel modify HabitatLevel.upgrade)(g)
+            urbanPrism composeLens
+            Urban.habitatLevel modify upgrade)(g)
         else g
       }
     }

@@ -15,10 +15,34 @@
   * along with this program.  If not, see <http://www.gnu.org/licenses/>.
   *
   */
-package fr.geocites.lucie
+package fr.geocite.lucie
 
-object activity {
+import monocle.macros._
+
+package object data {
   sealed trait Activity
   case object Industry extends Activity
   case object Center extends Activity
+
+  type Location = (Int, Int)
+
+
+  sealed trait Cell {
+    def location: Location
+  }
+
+  // TODO add flow direction
+  case class Water(location: Location) extends Cell
+  /**
+    * Urban cell
+    *
+    * @param activities list of activities of the urban cell
+    */
+  @Lenses case class Urban(location: Location, activities: Vector[Activity], habitatLevel: HabitatLevel) extends Cell
+  case class NotUrban(location: Location) extends Cell
+
+  sealed trait HabitatLevel
+  case object Elite extends HabitatLevel
+  case object Middle extends HabitatLevel
+  case object Poor extends HabitatLevel
 }

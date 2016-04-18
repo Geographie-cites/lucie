@@ -17,13 +17,13 @@
   */
 package fr.geocites.lucie
 
-import cell._
 import grid._
+import fr.geocite.lucie.data._
 
 object export {
   /* export en CSV*/
-  def toCSV(centrality: PartialFunction[Cell.Location, Double], grid: Grid) = {
-    val cellViews = List(Cell.toCentralityCSV(centrality)(_), Cell.toActivityCSV(_))
+  def toCSV(centrality: PartialFunction[Location, Double], grid: Grid) = {
+    val cellViews = List(cell.toCentralityCSV(centrality)(_), cell.toActivityCSV(_))
     val edges = grid.ways.map(Edge.toCSV).mkString(",")
 
     s"""${cellViews.map{ v => view(grid, v)}.mkString("\n\n")}

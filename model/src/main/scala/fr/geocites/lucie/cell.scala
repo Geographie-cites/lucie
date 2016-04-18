@@ -17,21 +17,16 @@
   */
 package fr.geocites.lucie
 
-import monocle.macros.Lenses
-import activity._
+import fr.geocite.lucie.data._
 
 object cell {
-
-  object Cell {
-
-    type Location = (Int, Int)
 
     def distance(l1: Location, l2: Location) =
       math.sqrt(math.pow(l2._1 - l1._1, 2) + math.pow(l2._2 - l1._2, 2))
 
     def hasSameLocation(c1: Cell, c2: Cell) = c1.location == c2.location
 
-    def toCentralityCSV(centrality: PartialFunction[Cell.Location, Double])(cell: Cell) =
+    def toCentralityCSV(centrality: PartialFunction[Location, Double])(cell: Cell) =
       cell match {
         case _: Water => s"Water(${centrality(cell.location)})"
         case _: Urban => s"Urban(${centrality(cell.location)})"
@@ -43,24 +38,6 @@ object cell {
         case c: Urban => s"Activities(${c.activities.mkString(" & ")})"
         case _ => ""
       }
-  }
-
-
-  sealed trait Cell {
-    def location: Cell.Location
-  }
-
-  // TODO add flow direction
-  case class Water(location: Cell.Location) extends Cell
-  /**
-    * Urban cell
-    *
-    * @param activities list of activities of the urban cell
-    */
-  @Lenses case class Urban(location: Cell.Location, activities: Vector[Activity], habitatLevel: HabitatLevel) extends Cell
-  case class NotUrban(location: Cell.Location) extends Cell
-
-  object Urban {
 
     /**
       * Remove an activity from a urban cell
@@ -70,7 +47,7 @@ object cell {
       urban.activities.indexOf(activity) match {
         case -1 => urban
         case i =>
-          val newActivities = urban.activities patch (from = i, patch = Nil, replaced = 1)
+          val newActivities = urban.activities patch(from = i, patch = Nil, replaced = 1)
           urban.copy(activities = newActivities)
       }
     }
@@ -81,14 +58,10 @@ object cell {
     def addActivity(urban: Urban, activity: Activity) =
       urban.copy(activities = urban.activities ++ Seq(activity))
 
-    def prism = monocle.Prism[Cell, Urban] {
+    def urbanPrism = monocle.Prism[Cell, Urban] {
       case u: Urban => Some(u)
       case _ => None
-    } (identity)
-
-  }
-
-  object HabitatLevel {
+    }(identity)
 
     def upgrade(l: HabitatLevel) =
       l match {
@@ -104,12 +77,4 @@ object cell {
         case Poor => Poor
       }
 
-  }
-
-  sealed trait HabitatLevel
-  case object Elite extends HabitatLevel
-  case object Middle extends HabitatLevel
-  case object Poor extends HabitatLevel
 }
-
-

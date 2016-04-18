@@ -22,18 +22,18 @@ import scala.util.Random
 import better.files._
 import rule._
 import cell._
+import fr.geocite.lucie.data._
 import grid._
-import activity._
 
 object Model extends App {
 
   val initialIndustry = 0.5
 
-  def concentricCentrality(grid: Grid): PartialFunction[Cell.Location, Double] = {
+  def concentricCentrality(grid: Grid): PartialFunction[Location, Double] = {
     def potentialMatrix(center: Cell) =
       Vector.tabulate(grid.side, grid.side) {
         (x, y) =>
-          val d = Cell.distance(center.location, (x, y))
+          val d = distance(center.location, (x, y))
           1.0 / (1.0 + math.pow(d, 2.0))
       }
 

@@ -17,20 +17,21 @@
   */
 package fr.geocites.lucie
 
+import fr.geocite.lucie.data._
 import cell._
 
 object grid {
 
-  type Centrality = Grid => PartialFunction[Cell.Location, Double]
+  type Centrality = Grid => PartialFunction[Location, Double]
 
   object Grid {
-    def neighbourCells(grid: Grid, l: Cell.Location, size: Int) =
+    def neighbourCells(grid: Grid, l: Location, size: Int) =
       neighbours(grid.side, l, size).map {
         case (i, j) => grid.cells(i)(j)
       }
 
     /* définition d'un voisinage*/
-    def neighbours(side: Int, location: Cell.Location, size: Int) = {
+    def neighbours(side: Int, location: Location, size: Int) = {
       val (i, j) = location
 
       for {
@@ -57,7 +58,7 @@ object grid {
     def lens(cell: Cell): monocle.Lens[Grid, Cell] = lens(cell.location)
 
     /* Renvoie un couple set / get qui remplace / renvoie un cell particuliére dans une grille */
-    def lens(location: Cell.Location): monocle.Lens[Grid, Cell] = {
+    def lens(location: Location): monocle.Lens[Grid, Cell] = {
       val (x, y) = location
       monocle.Lens { (g: Grid) => g.cells(x)(y) } {
         c => g =>
