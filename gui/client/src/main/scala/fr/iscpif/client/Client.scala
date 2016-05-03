@@ -15,6 +15,7 @@ import upickle._
 import autowire._
 
 import scalatags.JsDom.all._
+import fr.geocites.lucie.data._
 
 @JSExport("Client")
 object Client {
@@ -22,6 +23,8 @@ object Client {
 
   @JSExport
   def run() {
+
+
 
     val cells = Seq(
       HeatMapCell(1, 1, 23, "un"),
@@ -37,11 +40,27 @@ object Client {
     val heatMap = HeatMap(12, 20, cells, edges)
     dom.document.body.appendChild(heatMap.svgNode.render)
     
-    val cells2 = Seq(
-      HeatMapCell(1, 1, 23, "a text"),
-      HeatMapCell(1, 2, 23, "another text"))
+//    val cells2 = Seq(
+//      HeatMapCell(1, 1, 23, "a text"),
+//      HeatMapCell(1, 2, 23, "another text"))
+//
+//    heatMap.cells() = cells2
 
-    heatMap.cells() = cells2
+    Post[shared.Api].state.call().foreach{ g: Grid =>
+      heatMap.cells() = for {
+        c <- g.cells.flatten
+        (x, y) = c.location
+      } yield {
+        val i =
+          c match {
+            case _: Urban => 1
+            case _: Water => 50
+            case _: NotUrban => 100
+          }
+
+        HeatMapCell(x, y, i, "")
+      }
+    }
   }
 
 }

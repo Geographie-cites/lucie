@@ -25,34 +25,10 @@ import cell._
 import fr.geocites.lucie.data._
 import grid._
 
-object Model extends App {
+
+object Test {
 
   val initialIndustry = 0.5
-
-  def concentricCentrality(grid: Grid): PartialFunction[Location, Double] = {
-    def potentialMatrix(center: Cell) =
-      Vector.tabulate(grid.side, grid.side) {
-        (x, y) =>
-          val d = distance(center.location, (x, y))
-          1.0 / (1.0 + math.pow(d, 2.0))
-      }
-
-    def centers =
-     cells(grid).filter {
-       case u: Urban => u.activities.exists(_ == Center)
-       case _ => false
-     }
-
-    def aggregatedMatrix = {
-      val matrices = centers.map(potentialMatrix)
-
-      Vector.tabulate(grid.side, grid.side) {
-        (x, y) => (x, y) -> matrices.map(_(x)(y)).max
-      }
-    }
-
-    aggregatedMatrix.flatten.toMap
-  }
 
   /* Fonction définition random d'un vecteur activité de type Industry ou vide */
   def activities(random: Random) =
@@ -86,20 +62,54 @@ object Model extends App {
       } else NotUrban(x -> y)
     }
 
+  def grid(implicit random: Random) = {
+    val side = 21
+    val matrix =
+      Vector.tabulate(side, side) {
+        (i, j) => Test.stage1(side)(i, j)
+      }
+
+    val edges = Vector(GenericWay(Vertical, 5), GenericWay(Horizontal, 4))
+
+    Grid(matrix, edges, side)
+  }
+}
+
+object Model extends App {
+
+  def concentricCentrality(grid: Grid): PartialFunction[Location, Double] = {
+    def potentialMatrix(center: Cell) =
+      Vector.tabulate(grid.side, grid.side) {
+        (x, y) =>
+          val d = distance(center.location, (x, y))
+          1.0 / (1.0 + math.pow(d, 2.0))
+      }
+
+    def centers =
+      cells(grid).filter {
+        case u: Urban => u.activities.exists(_ == Center)
+        case _ => false
+      }
+
+    def aggregatedMatrix = {
+      val matrices = centers.map(potentialMatrix)
+
+      Vector.tabulate(grid.side, grid.side) {
+        (x, y) => (x, y) -> matrices.map(_(x)(y)).max
+      }
+    }
+
+    aggregatedMatrix.flatten.toMap
+  }
+
+
   implicit val rng = new Random(42)
 
   val wayAttractivity = 1.1
   val peripheralNeigborhoudSize = 2
 
-  val side = 21
-  val matrix =
-    Vector.tabulate(side, side) {
-      (i, j) => stage1(side)(i, j)
-    }
+  val grid = Test.grid
 
-  val edges = Vector(GenericWay(Vertical, 5), GenericWay(Horizontal, 4))
-
-  val grid = Grid(matrix, edges, side)
 
   /* Fonction de calcul de la valeur de centralité à partir de la fonction ci-dessus et de deux paramètes x,y*/
   def centrality: Centrality = (grid: Grid) => concentricCentrality(grid)

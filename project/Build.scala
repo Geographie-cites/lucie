@@ -47,16 +47,11 @@ object Lucie extends Build  {
 
   lazy val website = taskKey[Unit]("website")
 
-  val Resolvers = Seq(Resolver.sonatypeRepo("snapshots"),
-    "Typesafe repository" at "http://repo.typesafe.com/typesafe/releases/"
-  )
-
   lazy val shared = Project("gui-shared", file("gui/shared")) settings(commonSettings: _*) dependsOn(data) enablePlugins (ScalaJSPlugin)
 
   lazy val client = Project(
     "gui-client",
     file("gui/client")) settings(commonSettings: _*) settings(
-      resolvers in ThisBuild ++= Resolvers,
       skip in packageJSDependencies := false,
       jsDependencies += "org.webjars" % "d3js" % "3.5.12" / "d3.min.js",
       jsDependencies += "com.github.yoeluk" %%% "paper-scala-js" % "0.5-SNAPSHOT" / "paper-full.min.js",
@@ -74,7 +69,6 @@ object Lucie extends Build  {
   lazy val server = Project(
     "gui-server",
     file("gui/server")) settings(commonSettings: _*) settings(ScalatraPlugin.scalatraWithJRebel: _*) settings (
-      resolvers ++= Resolvers,
       libraryDependencies ++= Seq(
         "com.lihaoyi" %% "autowire" % "0.2.5",
         "com.lihaoyi" %% "upickle" % "0.3.8",
@@ -84,7 +78,7 @@ object Lucie extends Build  {
         "javax.servlet" % "javax.servlet-api" % "3.1.0" % "provided",
         "org.eclipse.jetty" % "jetty-webapp" % jettyVersion % "container"
       )
-    ) dependsOn(shared) enablePlugins (JettyPlugin)
+    ) dependsOn(shared, model) enablePlugins (JettyPlugin)
 
 
   lazy val bootstrap = Project(
