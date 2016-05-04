@@ -66,7 +66,7 @@ object Model extends App {
   def centrality: Centrality = (grid: Grid) => concentricCentrality(grid)
 
   /* Transitions rules */
-  val intraIndustry = urbanToUrbanRandomMove(Industry, centrality) -> 0.9
+  val intraIndustry = urbanToUrbanRandomMove(Industry, centrality) -> 0.1
 
   val extraIndustry =
     urbanToNotUrbanRandomMove(
@@ -75,16 +75,17 @@ object Model extends App {
       peripheralNeigborhoudSize,
       centrality,
       (location, activity) => Urban(location, Vector(activity), Poor)
-    ) -> 0.1
+    ) -> 0.9
 
+  val industrialRevolution = multinomialChoice(intraIndustry, extraIndustry)
 
   val downgrade = downgradeNearIndustryHabitations(0.05)
   val upgrade = upgradeHabitations(0.01)
 
   val evolutionRule = new Rule {
     override def apply(grid: Grid, random: Random): Grid = {
-      val composideRule =
-        (multinomialChoice(intraIndustry, extraIndustry)(_: Grid, random)) andThen
+      val composideRule = 
+        (industrialRevolution(_: Grid, random)) andThen
           (downgrade(_, random)) andThen
           (upgrade(_, random))
       composideRule(grid)
@@ -114,7 +115,7 @@ object Model extends App {
         case _ =>
      }
 
-  def logger(event: export.Logger.Event): Unit =
+  def fileLogger(event: export.Logger.Event): Unit =
     event match {
       case s: export.Logger.Step =>
         val stepDir = baseDir / s.step.formatted("%04d").toString

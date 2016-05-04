@@ -72,8 +72,8 @@ object analyse {
 
 
   def dbscan(grid: Grid, activity: Activity, minPointByCluster: Int = 3): Vector[Int] = {
-    val eps: Double = 0.5
-    case class ClusterPoint(location: Location) extends Clusterable {
+    val eps: Double = math.sqrt(18)
+    class ClusterPoint(location: Location) extends Clusterable {
       override def getPoint: Array[Double] = Array(location._1, location._2)
     }
 
@@ -84,8 +84,7 @@ object analyse {
         urban <- grid.cells.flatten.flatMap(urbanPrism.getOption)
         cellActivity <- urban.activities
         if cellActivity == activity
-      } yield ClusterPoint(urban.location)
-
+      } yield new ClusterPoint(urban.location)
 
     import collection.JavaConversions._
 
