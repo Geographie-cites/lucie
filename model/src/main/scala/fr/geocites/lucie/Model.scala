@@ -54,8 +54,7 @@ object Model extends App {
     aggregatedMatrix.flatten.toMap
   }
 
-
-  implicit val rng = new Random(42)
+  val rng = new Random(42)
 
   val wayAttractivity = 1.1
   val peripheralNeigborhoudSize = 2
@@ -82,15 +81,8 @@ object Model extends App {
   val downgrade = downgradeNearIndustryHabitations(0.05)
   val upgrade = upgradeHabitations(0.01)
 
-  val evolutionRule = new Rule {
-    override def apply(grid: Grid, random: Random): Grid = {
-      val composideRule = 
-        (industrialRevolution(_: Grid, random)) andThen
-          (downgrade(_, random)) andThen
-          (upgrade(_, random))
-      composideRule(grid)
-    }
-  }
+  val evolutionRule: Rule =
+    industrialRevolution andThen downgrade andThen upgrade
 
   //println(export.toCSV(centrality(grid), grid))
 
@@ -160,7 +152,7 @@ object Model extends App {
   /* Simulate the dynamic */
   val finalGrid =
     Dynamic.simulate(
-      grid,
+      State(grid, rng),
       evolutionRule,
       1000,
       distanceLogger)
@@ -173,18 +165,17 @@ object Model extends App {
 
 object Dynamic {
 
-  def simulate(grid: Grid, rule: Rule, steps: Int, logger: export.Logger.Logger)(implicit random: Random) = {
-
-    def simulate0(currentStep: Int, grid: Grid): Grid = {
-      logger(export.Logger.Step(currentStep, grid))
-      if(currentStep >= steps) grid
+  def simulate(state: State, rule: Rule, steps: Int, logger: export.Logger.Logger) = {
+    def simulate0(currentStep: Int, state: State): Grid = {
+      logger(export.Logger.Step(currentStep, state.grid))
+      if(currentStep >= steps) state.grid
       else {
-        val newGrid = rule(grid, random)
+        val newGrid = rule(state)
         simulate0(currentStep + 1, newGrid)
       }
     }
 
-    simulate0(0, grid)
+    simulate0(0, state)
   }
 
 }

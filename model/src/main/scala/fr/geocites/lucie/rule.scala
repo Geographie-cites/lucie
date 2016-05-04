@@ -22,11 +22,12 @@ import scala.util.Random
 import cell._
 import fr.geocites.lucie.data._
 import grid._
+import monocle.macros.Lenses
 
 object rule {
 
-
-  type Rule = ((Grid, Random) => Grid)
+  @Lenses case class State(grid: Grid, random: Random)
+  type Rule = State => State
 
   /**
     * Choose a rule at random between several rules
@@ -34,8 +35,7 @@ object rule {
     * @param rules set of (rule, weight)
     */
   def multinomialChoice(rules: (Rule, Double)*): Rule =
-    (grid: Grid, rng: Random) =>
-      multinomial[Rule](rules: _*)(rng).apply(grid, rng)
+    (s: State) => multinomial[Rule](rules: _*)(s.random).apply(s)
 
   /**
     *  Move activity from an urban cell to another
@@ -44,14 +44,14 @@ object rule {
     * @param centrality centrality function
     */
   def urbanToUrbanRandomMove(activity: Activity, centrality: Centrality): Rule =
-    (grid: Grid, random: Random) => {
-      val gridCentrality = centrality(grid)
+    (s: State) => {
+      val gridCentrality = centrality(s.grid)
 
-      val urbanOrigin = randomCellWithActivity(grid, activity, random, gridCentrality)
+      val urbanOrigin = randomCellWithActivity(s.grid, activity, s.random, gridCentrality)
 
       /* Création d'une liste de cells URBAN de destination possibles */
       val destinations =
-        cells(grid).
+        cells(s.grid).
           filter(c => !hasSameLocation(c, urbanOrigin)).
           collect { case (x: Urban) => x }.map { urb =>
           val weight =  1 - gridCentrality(urb.location)
@@ -59,11 +59,15 @@ object rule {
         }
 
       /* Choose the destination at random given the weights */
-      val urbanDestination = multinomial(destinations: _*)(random)
+      val urbanDestination = multinomial(destinations: _*)(s.random)
 
-      /* Update the grid by setting origin and destination with updated cells */
-      (cellLens(urbanOrigin).set (removeActivity(urbanOrigin, activity)) andThen
-        cellLens(urbanDestination).set(addActivity(urbanDestination, activity))) (grid)
+      /* Update thegrid by setting origin and destination with updated cells */
+
+      def updateGrid =
+        (cellLens(urbanOrigin).set(removeActivity(urbanOrigin, activity)) andThen
+          cellLens(urbanDestination).set(addActivity(urbanDestination, activity)))
+
+      State.grid.modify(updateGrid)(s)
     }
 
 
@@ -84,22 +88,25 @@ object rule {
     peripheralNeigborhoudSize: Int,
     centrality: Centrality,
     buildUrbanCell: (Location, Activity) => Urban): Rule =
-    (grid: Grid, random: Random) => {
-      val gridCentrality = centrality(grid)
-      val urbanOrigin = randomCellWithActivity(grid, activity, random, gridCentrality)
+    (s: State) => {
+      val gridCentrality = centrality(s.grid)
+      val urbanOrigin = randomCellWithActivity(s.grid, activity, s.random, gridCentrality)
 
       /* Select the destination uniformly at random */
       val attractivityMatrix =
-        cells(grid).map { c =>
+        cells(s.grid).map { c =>
           val (x, y) = c.location
-          c -> (aggregatedAttractivity(grid, peripheralNeigborhoudSize, wayAttractivity)(x, y))
+          c -> (aggregatedAttractivity(s.grid, peripheralNeigborhoudSize, wayAttractivity)(x, y))
         }.collect { case x@(_: NotUrban, _) => x }
 
-      if(attractivityMatrix.isEmpty) grid
+      if(attractivityMatrix.isEmpty) s
       else {
-        val destination = multinomial(attractivityMatrix: _*)(random)
-        (cellLens(urbanOrigin).set(removeActivity(urbanOrigin, activity)) andThen
-          (cellLens(destination).set(buildUrbanCell(destination.location, activity)))) (grid)
+        val destination = multinomial(attractivityMatrix: _*)(s.random)
+        def updateGrid =
+          cellLens(urbanOrigin).set(removeActivity(urbanOrigin, activity)) andThen
+           (cellLens(destination).set(buildUrbanCell(destination.location, activity)))
+
+        State.grid.modify(updateGrid) (s)
       }
     }
 
@@ -108,28 +115,32 @@ object rule {
     * Decease the level of habitation near an industry
     */
   def downgradeNearIndustryHabitations(p: Double): Rule =
-    (grid: Grid, rng: Random) => {
-      cells(grid).collect { case x: Urban => x }.foldLeft(grid) { (g, u) =>
-        if (u.activities.exists(_ == Industry) && rng.nextDouble() < p)
-          (cellLens(u) composePrism
-            urbanPrism composeLens
-            Urban.habitatLevel modify downgrade) (g)
-        else g
-      }
+    (s: State) => {
+      def newGrid =
+        cells(s.grid).collect { case x: Urban => x }.foldLeft(s.grid) { (g, u) =>
+          if (u.activities.exists(_ == Industry) && s.random.nextDouble() < p)
+            (cellLens(u) composePrism
+              urbanPrism composeLens
+              Urban.habitatLevel modify downgrade) (g)
+          else g
+        }
+      State.grid.set(newGrid)(s)
     }
 
   /**
     * Increase the level of habitation near an industry
     */
-  def upgradeHabitations(p: Double) =
-    (grid: Grid, rng: Random) => {
-      cells(grid).collect { case x: Urban => x }.foldLeft(grid) { (g, u) =>
-        if (u.activities.forall(_ != Industry) && rng.nextDouble() < p)
-          (cellLens(u) composePrism
-            urbanPrism composeLens
-            Urban.habitatLevel modify upgrade)(g)
-        else g
-      }
+  def upgradeHabitations(p: Double): Rule =
+    (s: State) => {
+      def newGrid =
+        cells(s.grid).collect { case x: Urban => x }.foldLeft(s.grid) { (g, u) =>
+          if (u.activities.forall(_ != Industry) && s.random.nextDouble() < p)
+            (cellLens(u) composePrism
+              urbanPrism composeLens
+              Urban.habitatLevel modify upgrade)(g)
+          else g
+        }
+      State.grid.set(newGrid)(s)
     }
 
   /* Helper functions */
