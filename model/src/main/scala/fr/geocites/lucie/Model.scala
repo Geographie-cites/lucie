@@ -25,57 +25,9 @@ import cell._
 import fr.geocites.lucie.data._
 import grid._
 
-
-object Test {
+object Model extends App {
 
   val initialIndustry = 0.5
-
-  /* Fonction définition random d'un vecteur activité de type Industry ou vide */
-  def activities(random: Random) =
-    if(random.nextDouble() < initialIndustry) Vector(Industry) else Vector()
-
-
-  /**
-    * Fonction de génération de la grille de départ
-    *
-    * placement détermine de WATER
-    * placement déterminé de URBAN > attribut activité généré depuis fonction qui génére les activités
-    * cellules non URBAN = NONURBAN
-    *
-    * @param side side of the world
-    * @return the world for stage1
-    */
-  def stage1(side: Int)(x: Int, y: Int)(implicit random: Random) =
-    if(x == 0) Water(x -> y)
-    else {
-      if (x >= 3 && x <= 9 && y >= 7 && y <= 13) {
-        val acts =
-          if(x == 6 && y == 10) activities(random) ++ Seq(Center)
-          else activities(random)
-
-        val level =
-          if(acts.contains(Center)) Elite
-          else if(acts.contains(Industry)) Poor
-          else Middle
-
-        Urban(x -> y, activities = acts, habitatLevel = level)
-      } else NotUrban(x -> y)
-    }
-
-  def grid(implicit random: Random) = {
-    val side = 21
-    val matrix =
-      Vector.tabulate(side, side) {
-        (i, j) => Test.stage1(side)(i, j)
-      }
-
-    val edges = Vector(GenericWay(Vertical, 5), GenericWay(Horizontal, 4))
-
-    Grid(matrix, edges, side)
-  }
-}
-
-object Model extends App {
 
   def concentricCentrality(grid: Grid): PartialFunction[Location, Double] = {
     def potentialMatrix(center: Cell) =
@@ -107,8 +59,7 @@ object Model extends App {
 
   val wayAttractivity = 1.1
   val peripheralNeigborhoudSize = 2
-
-  val grid = Test.grid
+  val grid = world.industrialWorld1(initialIndustry)(rng)
 
 
   /* Fonction de calcul de la valeur de centralité à partir de la fonction ci-dessus et de deux paramètes x,y*/
@@ -159,7 +110,7 @@ object Model extends App {
   def distanceLogger(event: export.Logger.Event): Unit =
      event match {
         case s: export.Logger.Step =>
-          println(s"${analyse.averageDistance(s.grid, Industry)}, ${analyse.standardDeviation(s.grid, Industry)}")
+          println(s"${analyse.averageDistance(s.grid, Industry)}, ${analyse.standardDeviation(s.grid, Industry)}, ${analyse.moran(s.grid, Industry)}, ${analyse.dbscan(s.grid, Industry).size}")
         case _ =>
      }
 
@@ -210,7 +161,7 @@ object Model extends App {
     Dynamic.simulate(
       grid,
       evolutionRule,
-      100,
+      1000,
       distanceLogger)
 
 //  println("-- Final --")

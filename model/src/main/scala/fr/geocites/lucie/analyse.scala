@@ -19,10 +19,25 @@ package fr.geocites.lucie
 
 import data._
 import cell._
+import org.apache.commons.math3.ml.clustering.{Clusterable, DBSCANClusterer}
 
 object analyse {
 
   import org.apache.commons.math3.util.MathArrays
+
+  def moran(grid: Grid, activity: Activity): Double = {
+    val weights =
+      grid.cells.map{ line =>
+        line.map { cell =>
+          urbanPrism.getOption(cell) match {
+            case Some(urban) => urban.activities.count(_ == activity)
+            case None => 0.0
+          }
+        }
+      }
+
+    moran(weights)
+  }
 
   /**
     * Moran index using fast convolution. Matrix should be a square matrix.
@@ -55,6 +70,29 @@ object analyse {
     distances.map { d => math.sqrt(math.pow(d - avg, 2))}.sum / distances.size
   }
 
+
+  def dbscan(grid: Grid, activity: Activity, minPointByCluster: Int = 3): Vector[Int] = {
+    val eps: Double = 0.5
+    case class ClusterPoint(location: Location) extends Clusterable {
+      override def getPoint: Array[Double] = Array(location._1, location._2)
+    }
+
+    val clusterer = new DBSCANClusterer[ClusterPoint](eps, minPointByCluster)
+
+    val clusterPoints =
+      for {
+        urban <- grid.cells.flatten.flatMap(urbanPrism.getOption)
+        cellActivity <- urban.activities
+        if cellActivity == activity
+      } yield ClusterPoint(urban.location)
+
+
+    import collection.JavaConversions._
+
+    for {
+      cluster <- clusterer.cluster(clusterPoints).toVector
+    } yield cluster.getPoints.size
+  }
 
   /* -- Helper functions -- */
 
