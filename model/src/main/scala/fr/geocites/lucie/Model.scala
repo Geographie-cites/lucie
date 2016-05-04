@@ -22,44 +22,21 @@ import scala.util.Random
 import better.files._
 import rule._
 import cell._
-import fr.geocites.lucie.data._
+import data._
 import grid._
+import world._
+import export._
 
 object Model extends App {
 
-  val initialIndustry = 0.5
-
-  def concentricCentrality(grid: Grid): PartialFunction[Location, Double] = {
-    def potentialMatrix(center: Cell) =
-      Vector.tabulate(grid.side, grid.side) {
-        (x, y) =>
-          val d = distance(center.location, (x, y))
-          1.0 / (1.0 + math.pow(d, 2.0))
-      }
-
-    def centers =
-      cells(grid).filter {
-        case u: Urban => u.activities.exists(_ == Center)
-        case _ => false
-      }
-
-    def aggregatedMatrix = {
-      val matrices = centers.map(potentialMatrix)
-
-      Vector.tabulate(grid.side, grid.side) {
-        (x, y) => (x, y) -> matrices.map(_(x)(y)).max
-      }
-    }
-
-    aggregatedMatrix.flatten.toMap
-  }
-
+  val initialIndustry = 0.7
   val rng = new Random(42)
-
-  val wayAttractivity = 1.1
+  val wayAttractivity = 0.5
   val peripheralNeigborhoudSize = 2
-  val grid = world.industrialWorld1(initialIndustry)(rng)
 
+  val grid = world.industrialWorld1(initialIndustry)(rng)
+  val numberOfIndustry =
+      grid.cells.flatten.flatMap(urbanPrism.getOption).flatMap(_.activities.filter(_ == Industry)).size
 
   /* Fonction de calcul de la valeur de centralité à partir de la fonction ci-dessus et de deux paramètes x,y*/
   def centrality: Centrality = (grid: Grid) => concentricCentrality(grid)
@@ -100,16 +77,16 @@ object Model extends App {
      lines.mkString("\n")
    }
 
-  def distanceLogger(event: export.Logger.Event): Unit =
+  def distanceLogger(event: export.Event): Unit =
      event match {
-        case s: export.Logger.Step =>
+        case s: Event.Step =>
           println(s"${analyse.averageDistance(s.grid, Industry)}, ${analyse.standardDeviation(s.grid, Industry)}, ${analyse.moran(s.grid, Industry)}, ${analyse.dbscan(s.grid, Industry).size}")
         case _ =>
      }
 
-  def fileLogger(event: export.Logger.Event): Unit =
+  def fileLogger(event: export.Event): Unit =
     event match {
-      case s: export.Logger.Step =>
+      case s: export.Event.Step =>
         val stepDir = baseDir / s.step.formatted("%04d").toString
         stepDir.createDirectories()
 
@@ -151,34 +128,23 @@ object Model extends App {
 
   /* Simulate the dynamic */
   val finalGrid =
-    Dynamic.simulate(
+    dynamic.simulate(
       State(grid, rng),
       evolutionRule,
       1000,
-      distanceLogger)
+      fileLogger)
+
+  val clusters = analyse.dbscan(finalGrid, Industry)
+
+  println(analyse.moran(finalGrid, Industry))
+  println(clusters.size)
+  println(clusters.sum.toDouble / numberOfIndustry)
 
 //  println("-- Final --")
 //  println(export.toCSV(centrality(finalGrid), finalGrid))
 
 }
 
-
-object Dynamic {
-
-  def simulate(state: State, rule: Rule, steps: Int, logger: export.Logger.Logger) = {
-    def simulate0(currentStep: Int, state: State): Grid = {
-      logger(export.Logger.Step(currentStep, state.grid))
-      if(currentStep >= steps) state.grid
-      else {
-        val newGrid = rule(state)
-        simulate0(currentStep + 1, newGrid)
-      }
-    }
-
-    simulate0(0, state)
-  }
-
-}
 
 
 

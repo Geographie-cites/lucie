@@ -37,10 +37,15 @@ object export {
     s"""$csvGrid""".stripMargin
   }
 
-  object Logger {
-    sealed trait Event
+  sealed trait Event
+  object Event {
     case class Step(step: Int, grid: Grid) extends Event
-
-    type Logger = Event => Unit
   }
+
+  type Logger = Event => Unit
+
+  object Logger {
+    def empty: Logger = (e: Event) => Unit
+  }
+
 }

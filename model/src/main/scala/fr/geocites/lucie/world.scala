@@ -17,8 +17,9 @@
   */
 package fr.geocites.lucie
 
-import fr.geocites.lucie.data.{Middle, NotUrban, Urban, _}
-
+import data._
+import grid._
+import cell._
 import scala.util.Random
 
 object world {
@@ -63,6 +64,31 @@ object world {
   }
 
 
+
+  def concentricCentrality(grid: Grid): PartialFunction[Location, Double] = {
+    def potentialMatrix(center: Cell) =
+      Vector.tabulate(grid.side, grid.side) {
+        (x, y) =>
+          val d = distance(center.location, (x, y))
+          1.0 / (1.0 + math.pow(d, 2.0))
+      }
+
+    def centers =
+      cells(grid).filter {
+        case u: Urban => u.activities.exists(_ == Center)
+        case _ => false
+      }
+
+    def aggregatedMatrix = {
+      val matrices = centers.map(potentialMatrix)
+
+      Vector.tabulate(grid.side, grid.side) {
+        (x, y) => (x, y) -> matrices.map(_(x)(y)).max
+      }
+    }
+
+    aggregatedMatrix.flatten.toMap
+  }
 
 
 }

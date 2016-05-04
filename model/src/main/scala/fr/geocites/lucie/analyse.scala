@@ -72,7 +72,7 @@ object analyse {
 
 
   def dbscan(grid: Grid, activity: Activity, minPointByCluster: Int = 3): Vector[Int] = {
-    val eps: Double = math.sqrt(18)
+    val eps: Double = (math.sqrt(2) * 2) + 0.01
     class ClusterPoint(location: Location) extends Clusterable {
       override def getPoint: Array[Double] = Array(location._1, location._2)
     }

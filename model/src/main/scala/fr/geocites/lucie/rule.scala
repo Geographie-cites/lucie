@@ -53,7 +53,7 @@ object rule {
       val destinations =
         cells(s.grid).
           filter(c => !hasSameLocation(c, urbanOrigin)).
-          collect { case (x: Urban) => x }.map { urb =>
+          flatMap(urbanPrism.getOption).map { urb =>
           val weight =  1 - gridCentrality(urb.location)
           (urb, weight)
         }
