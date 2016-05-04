@@ -24,8 +24,6 @@ object Client {
   @JSExport
   def run() {
 
-
-
     val cells = Seq(
       HeatMapCell(1, 1, 23, "un"),
       HeatMapCell(1, 2, 23, "deux"),

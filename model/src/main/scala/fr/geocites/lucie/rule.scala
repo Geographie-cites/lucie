@@ -25,6 +25,13 @@ import grid._
 
 object rule {
 
+  trait Rule extends ((Grid, Random) => Grid)
+
+  /**
+    * Choose a rule at random between several rules
+    *
+    * @param rules set of (rule, weight)
+    */
   def multinomialChoice(rules: (Rule, Double)*) = new Rule {
     override def apply(v1: Grid, v2: Random): Grid =  {
       val rule = multinomial(rules.map{ case(r, w) => (r, w) }.toList)(v2)
@@ -32,33 +39,11 @@ object rule {
     }
   }
 
-  def multinomial[T](values: List[(T, Double)])(implicit random: Random): T = {
-    @tailrec def multinomial0[T](values: List[(T, Double)])(draw: Double): T = {
-      values match {
-        case Nil ⇒ throw new RuntimeException("List should never be empty.")
-        case (bs, _) :: Nil ⇒ bs
-        case (bs, weight) :: tail ⇒
-          if (draw <= weight) bs
-          else multinomial0(tail)(draw - weight)
-      }
-    }
-
-    multinomial0(values)(random.nextDouble() * values.map(_._2).sum)
-  }
-  
-  def randomCellWithActivity(grid: Grid, activity: Activity, random: Random, centrality: PartialFunction[Location, Double]) = {
-    val selectedCells =
-      cells(grid).collect { case (x: Urban) => x }.flatMap { urban =>
-        if(urban.activities.contains(activity)) Some(urban -> centrality(urban.location))
-        else None
-      }
-
-    multinomial(selectedCells.toList)(random)
-  }
-
-
   /**
     *  Move activity from an urban cell to another
+    *
+    * @param activity activity to move
+    * @param centrality centrality function
     */
   def urbanToUrbanRandomMove(activity: Activity, centrality: Centrality) = new Rule {
     def apply(grid: Grid, random: Random): Grid = {
@@ -83,6 +68,76 @@ object rule {
         cellLens(urbanDestination).set(addActivity(urbanDestination, activity))) (grid)
     }
   }
+
+
+  /**
+    * Move activity from a urban cell to a peripheral non-urban cell
+    * It transform the destination cell into a urban cell
+    *
+    * @param activity
+    * @param wayAttractivity attractivity of the transportation ways
+    * @param peripheralNeigborhoudSize
+    * @param centrality centrality function
+    * @param buildUrbanCell
+    * @return
+    */
+  def urbanToNotUrbanRandomMove(
+    activity: Activity,
+    wayAttractivity: Double,
+    peripheralNeigborhoudSize: Int,
+    centrality: Centrality,
+    buildUrbanCell: (Location, Activity) => Urban) = new Rule {
+
+    def apply(grid: Grid, random: Random): Grid = {
+      val gridCentrality = centrality(grid)
+      val urbanOrigin = randomCellWithActivity(grid, activity, random, gridCentrality)
+
+      /* Select the destination uniformly at random */
+      val attractivityMatrix =
+        cells(grid).map { c =>
+          val (x, y) = c.location
+          c -> (aggregatedAttractivity(grid, peripheralNeigborhoudSize, wayAttractivity)(x, y))
+        }.collect { case x@(_: NotUrban, _) => x }
+
+      val destination = multinomial(attractivityMatrix.toList)(random)
+
+      (cellLens(urbanOrigin).set(removeActivity(urbanOrigin, activity)) andThen
+        (cellLens(destination).set(buildUrbanCell(destination.location, activity)))) (grid)
+    }
+  }
+
+
+  /**
+    * Decease the level of habitation near an industry
+    */
+  def downgradeNearIndustryHabitations(p: Double) = new Rule {
+    override def apply(grid: Grid, rng: Random): Grid = {
+      cells(grid).collect { case x: Urban => x }.foldLeft(grid) { (g, u) =>
+        if (u.activities.exists(_ == Industry) && rng.nextDouble() < p)
+          (cellLens(u) composePrism
+            urbanPrism composeLens
+            Urban.habitatLevel modify downgrade) (g)
+        else g
+      }
+    }
+  }
+
+  /**
+    * Increase the level of habitation near an industry
+    */
+  def upgradeHabitations(p: Double) = new Rule {
+    override def apply(grid: Grid, rng: Random): Grid = {
+      cells(grid).collect { case x: Urban => x }.foldLeft(grid) { (g, u) =>
+        if (u.activities.forall(_ != Industry) && rng.nextDouble() < p)
+          (cellLens(u) composePrism
+            urbanPrism composeLens
+            Urban.habitatLevel modify upgrade)(g)
+        else g
+      }
+    }
+  }
+
+  /* Helper functions */
 
   def peripheralAttractivity(grid: Grid, peripheralNeigborhoudSize: Int)(x: Int, y: Int): Double =
     grid.cells(x)(y) match {
@@ -111,61 +166,38 @@ object rule {
     peripheralAttractivity(grid, peripheralNeigborhoudSize)(x, y) *
       transportAttractivity(grid, wayAttractivity)(x, y)
 
-  /**
-    * Move activity from a urban cell to a peripheral non-urban cell
-    * It transform the destination cell into a urban cell
-    */
-  def urbanToNotUrbanRandomMove(
-    activity: Activity,
-    wayAttractivity: Double,
-    peripheralNeigborhoudSize: Int,
-    centrality: Centrality,
-    buildUrbanCell: (Location, Activity) => Urban) = new Rule {
 
-    def apply(grid: Grid, random: Random): Grid = {
-      val gridCentrality = centrality(grid)
-      val urbanOrigin = randomCellWithActivity(grid, activity, random, gridCentrality)
-
-      /* Select the destination uniformly at random */
-      val attractivityMatrix =
-        cells(grid).map { c =>
-          val (x, y) = c.location
-          c -> (aggregatedAttractivity(grid, peripheralNeigborhoudSize, wayAttractivity)(x, y))
-        }.collect { case x@(_: NotUrban, _) => x }
-
-      val destination = multinomial(attractivityMatrix.toList)(random)
-
-      (cellLens(urbanOrigin).set(removeActivity(urbanOrigin, activity)) andThen
-        (cellLens(destination).set(buildUrbanCell(destination.location, activity)))) (grid)
-    }
-  }
-
-  def downgradeNearIndustryHabitations(p: Double) = new Rule {
-    override def apply(grid: Grid, rng: Random): Grid = {
-      cells(grid).collect { case x: Urban => x }.foldLeft(grid) { (g, u) =>
-        if (u.activities.exists(_ == Industry) && rng.nextDouble() < p)
-          (cellLens(u) composePrism
-            urbanPrism composeLens
-            Urban.habitatLevel modify downgrade) (g)
-        else g
+  def multinomial[T](values: List[(T, Double)])(implicit random: Random): T = {
+    @tailrec def multinomial0[T](values: List[(T, Double)])(draw: Double): T = {
+      values match {
+        case Nil ⇒ throw new RuntimeException("List should never be empty.")
+        case (bs, _) :: Nil ⇒ bs
+        case (bs, weight) :: tail ⇒
+          if (draw <= weight) bs
+          else multinomial0(tail)(draw - weight)
       }
     }
-  }
 
-  def upgradeHabitations(p: Double) = new Rule {
-    override def apply(grid: Grid, rng: Random): Grid = {
-      cells(grid).collect { case x: Urban => x }.foldLeft(grid) { (g, u) =>
-        if (u.activities.forall(_ != Industry) && rng.nextDouble() < p)
-          (cellLens(u) composePrism
-            urbanPrism composeLens
-            Urban.habitatLevel modify upgrade)(g)
-        else g
+    multinomial0(values)(random.nextDouble() * values.map(_._2).sum)
+  }
+  
+  def randomCellWithActivity(grid: Grid, activity: Activity, random: Random, centrality: PartialFunction[Location, Double]) = {
+    val selectedCells =
+      cells(grid).collect { case (x: Urban) => x }.flatMap { urban =>
+        if(urban.activities.contains(activity)) Some(urban -> centrality(urban.location))
+        else None
       }
-    }
+
+    multinomial(selectedCells.toList)(random)
   }
 
 
-  trait Rule extends ((Grid, Random) => Grid)
+
+
+
+
+
+
 
 
 }

@@ -140,7 +140,7 @@ object Model extends App {
     }
   }
 
-  println(export.toCSV(centrality(grid), grid))
+  //println(export.toCSV(centrality(grid), grid))
 
   val baseDir = File("/tmp/lucie/")
 
@@ -155,6 +155,13 @@ object Model extends App {
        } yield (Seq(x - i - 1, j) ++ vs).mkString(",")
      lines.mkString("\n")
    }
+
+  def distanceLogger(event: export.Logger.Event): Unit =
+     event match {
+        case s: export.Logger.Step =>
+          println(s"${analyse.averageDistance(s.grid, Industry)}, ${analyse.standardDeviation(s.grid, Industry)}")
+        case _ =>
+     }
 
   def logger(event: export.Logger.Event): Unit =
     event match {
@@ -190,12 +197,12 @@ object Model extends App {
         stepDir / "cells.csv" << toCSV(s.grid.side, s.grid.side)(cellType, industry, attractivity, gridCentrality, level)
     }
 
-  baseDir.createDirectories()
-  baseDir / "ways.csv" < grid.ways.map(Edge.toCSV).mkString("\n")
-  baseDir / "parameters.csv" <
-    s"""wayAttractivity,${wayAttractivity}
-       |peripheralNeigborhoudSize,${peripheralNeigborhoudSize}
-     """.stripMargin
+//  baseDir.createDirectories()
+//  baseDir / "ways.csv" < grid.ways.map(Edge.toCSV).mkString("\n")
+//  baseDir / "parameters.csv" <
+//    s"""wayAttractivity,${wayAttractivity}
+//       |peripheralNeigborhoudSize,${peripheralNeigborhoudSize}
+//     """.stripMargin
 
 
   /* Simulate the dynamic */
@@ -204,10 +211,10 @@ object Model extends App {
       grid,
       evolutionRule,
       100,
-      logger)
+      distanceLogger)
 
-  println("-- Final --")
-  println(export.toCSV(centrality(finalGrid), finalGrid))
+//  println("-- Final --")
+//  println(export.toCSV(centrality(finalGrid), finalGrid))
 
 }
 
@@ -224,6 +231,7 @@ object Dynamic {
         simulate0(currentStep + 1, newGrid)
       }
     }
+
     simulate0(0, grid)
   }
 
